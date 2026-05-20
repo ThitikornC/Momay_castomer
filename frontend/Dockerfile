@@ -4,6 +4,13 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
+
+# Receive Railway Variables as build args
+ARG VITE_GATEWAY_URL
+ARG VITE_HOME
+ENV VITE_GATEWAY_URL=$VITE_GATEWAY_URL
+ENV VITE_HOME=$VITE_HOME
+
 RUN npm run build
 
 # Stage 2: Serve static files
