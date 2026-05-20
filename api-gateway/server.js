@@ -31,6 +31,7 @@ const STALE   = parseInt(process.env.STALE_SEC || '15', 10) * 1000;
 const cameras = {};            // metadata: { [cam_id]: {...} }
 const frames  = {};            // latest JPEG frame: { [cam_id]: Buffer }
 const viewers = {};            // MJPEG clients: { [cam_id]: Set<res> }
+let   plans   = [];            // floor plans: [{ id, name, image, zones, cameraOrder }]
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(cors());
@@ -161,6 +162,16 @@ app.get('/api/summary', (req, res) => {
 });
 
 // ─── Health check ─────────────────────────────────────────────────────────────
+// ─── Floor plans endpoints ───────────────────────────────────────────────────
+app.get('/api/plans', (_req, res) => res.json(plans));
+
+app.post('/api/plans', (req, res) => {
+  const body = req.body;
+  if (!Array.isArray(body)) return res.status(400).json({ error: 'Body must be an array' });
+  plans = body;
+  res.json({ ok: true, count: plans.length });
+});
+
 app.get('/health', (_req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
 // ─── HTTP + WebSocket server ──────────────────────────────────────────────────

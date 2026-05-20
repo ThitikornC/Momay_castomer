@@ -109,7 +109,7 @@ function tabStyle(active) {
 export default function Heatmap() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
-  const gatewayUrl = searchParams.get('gateway') || ''
+  const gatewayUrl = searchParams.get('gateway') || import.meta.env.VITE_GATEWAY_URL || ''
   const apiBase = gatewayUrl.replace(/\/$/, '')
 
   const svgRef      = useRef(null)
@@ -188,7 +188,17 @@ export default function Heatmap() {
   const liveCount     = cameras.filter(c => c.running).length
 
   // ── Floor plan CRUD ────────────────────────────────────────────────────────
-  const _setPlans = (p) => { setPlans(p); savePlans(p) }
+  const _setPlans = (p) => {
+    setPlans(p)
+    savePlans(p)
+    if (apiBase) {
+      fetch(apiBase + '/api/plans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(p),
+      }).catch(() => {})
+    }
+  }
 
   const createPlan = async () => {
     if (!modalName.trim()) return

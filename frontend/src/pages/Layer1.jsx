@@ -335,6 +335,15 @@ export default function Layer1() {
   const [prevTotal, setPrevTotal] = useState(0)
   const abortRef = useRef(null)
 
+  // Fetch plans from gateway (overrides localStorage when available)
+  useEffect(() => {
+    if (!apiBase) return
+    fetch(apiBase + '/api/plans')
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data) && data.length > 0) setPlans(data) })
+      .catch(() => {})
+  }, [apiBase])
+
   // Reload plans when localStorage changes from Heatmap editor
   useEffect(() => {
     const onStorage = () => setPlans(loadPlans())
@@ -391,7 +400,7 @@ export default function Layer1() {
     const count = cam?.total_people || 0
     const capacity = DEFAULT_CAPACITY
     const ratio = Math.min(count / capacity, 1)
-    return { name: cam?.name || `กล้อง ${i + 1}`, color: '#3b82f6', count, capacity, ratio, running: cam?.running || false }
+    return { name: `กล้อง ${i + 1}`, color: '#3b82f6', count, capacity, ratio, running: cam?.running || false }
   })
 
   // Risk score = รวมทุกกล้อง / ความจุรวมทั้งหมด × 100
