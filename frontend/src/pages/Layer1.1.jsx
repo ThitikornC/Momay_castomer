@@ -223,7 +223,7 @@ export default function App() {
                 const color = camColor(pct)
                 const live = !!cam1Id && !!apiBase
                 return (
-                  <div className="flex items-center h-[52px] cursor-default group w-full max-w-[240px] md:max-w-none mx-auto">
+                  <div className="flex items-center h-[52px] cursor-default group w-full">
                     <div className="w-[56px] h-[56px] flex-shrink-0 flex items-center justify-center select-none relative z-10">
                       <svg className="w-full h-full" viewBox="0 0 100 100">
                         <circle cx="50" cy="50" r="48" fill="#051715" className="transition-colors duration-300 group-hover:fill-[#061c18]" />
@@ -255,7 +255,7 @@ export default function App() {
               {MOCK_CAMS.map(cam => {
                 const color = camColor(cam.pct)
                 return (
-                  <div key={cam.id} className="flex items-center h-[52px] cursor-default group w-full max-w-[240px] md:max-w-none mx-auto">
+                  <div key={cam.id} className="flex items-center h-[52px] cursor-default group w-full">
                     <div className="w-[56px] h-[56px] flex-shrink-0 flex items-center justify-center select-none relative z-10">
                       <svg className="w-full h-full" viewBox="0 0 100 100">
                         <circle cx="50" cy="50" r="48" fill="#051715" className="transition-colors duration-300 group-hover:fill-[#061c18]" />
@@ -403,9 +403,21 @@ export default function App() {
             <div className="relative w-full bg-[#030f0e] rounded-lg border border-[#0d2e29]/60 overflow-hidden"
               style={{ aspectRatio: '591/673' }}>
               <svg className="w-full h-full" viewBox="0 0 591 673" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <filter id="neon-red-glow" x="-50%" y="-50%" width="200%" height="200%">
+                    <feGaussianBlur in="SourceGraphic" stdDeviation="12" result="blur"/>
+                    <feMerge>
+                      <feMergeNode in="blur"/>
+                      <feMergeNode in="blur"/>
+                      <feMergeNode in="SourceGraphic"/>
+                    </feMerge>
+                  </filter>
+                </defs>
                 <path d="M13 468.323L386.5 652.323L496.5 542.323L345.5 470.085L334.5 464.823L120.5 360.214L13 468.323Z" fill="#11FB30" fillOpacity="0.47"/>
                 <path d="M125.363 355.323L120.5 360.214L334.5 464.823L461 337.806L248 231.991L125.363 355.323Z" fill="#FFFB10" fillOpacity="0.72"/>
-                <path d="M579.5 218.823L366 113.323L248 231.991L461 337.806L579.5 218.823Z" fill="#FB0707" fillOpacity="0.76"/>
+                <path d="M579.5 218.823L366 113.323L248 231.991L461 337.806L579.5 218.823Z" fill="#FF1515" filter="url(#neon-red-glow)">
+                  <animate attributeName="fill-opacity" values="0.9;0.18;0.9" dur="1.1s" repeatCount="indefinite" calcMode="spline" keySplines="0.4 0 0.6 1;0.4 0 0.6 1"/>
+                </path>
                 <path d="M120.5 360.214L334.5 464.823L345.5 470.085L496.5 542.323V559.823L386.5 670.323L1.5 481.323V363.823L107.729 258.323M386.5 670.323V652.323M496.5 542.323L386.5 652.323M334.5 464.823L461 337.806M579.5 218.823V121.323M579.5 218.823L589.5 224.323M579.5 218.823L366 113.323M579.5 218.823L461 337.806M246.756 134.736L366 15.3227L579.5 121.323M579.5 121.323L589.5 113.323M366 15.3227V113.323M386.5 652.323L13 468.323V368.823M13 368.823L1.5 363.823M13 368.823L120.5 261.17M13 468.323L120.5 360.214M345.5 470.085L461 353.751L589.5 224.323V113.323L366 1.82266L236.864 130.073L107.729 258.323M366 113.323L248 231.991M120.5 360.214L125.363 355.323L248 231.991M120.5 360.214V261.17M461 337.806L248 231.991M461 337.806V353.751M248 231.991V135.323L246.756 134.736M120.5 261.17L107.729 258.323M120.5 261.17L246.756 134.736M236.864 130.073L246.756 134.736" stroke="#FFFDFD" strokeWidth="3"/>
                 <path d="M248.5 233.323L122.5 361.823L336 462.823L461 338.323L248.5 233.323Z" stroke="#E1DE08" strokeOpacity="0.72" strokeWidth="3"/>
                 <path d="M121 362.823L17 466.323L387.5 648.323L493.5 542.323L121 362.823Z" stroke="#35E200" strokeWidth="3"/>
