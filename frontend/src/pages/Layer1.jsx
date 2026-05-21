@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import Header from '../components/Header.jsx'
+import { Zap, Bell, AlertTriangle, Info, ArrowUpRight } from 'lucide-react'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const FP_STORAGE = 'heatmap_floor_plans'
 const DEFAULT_CAPACITY = 20
-const PALETTE = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#14b8a6']
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function heatColor(ratio, alpha = 0.55) {
@@ -41,11 +40,11 @@ function loadPlans() {
 }
 
 function riskMeta(score) {
-  if (score > 80) return { label: 'เต็ม/แออัด',   color: '#ef4444', bg: 'rgba(239,68,68,0.15)',   border: 'rgba(239,68,68,0.35)' }
-  if (score > 60) return { label: 'หนาแน่น',      color: '#f97316', bg: 'rgba(249,115,22,0.15)',  border: 'rgba(249,115,22,0.35)' }
-  if (score > 40) return { label: 'ปานกลาง',      color: '#eab308', bg: 'rgba(234,179,8,0.15)',   border: 'rgba(234,179,8,0.35)' }
-  if (score > 20) return { label: 'ใช้งานน้อย',   color: '#22c55e', bg: 'rgba(34,197,94,0.12)',   border: 'rgba(34,197,94,0.3)' }
-  return           { label: 'ว่างมาก',        color: '#16a34a', bg: 'rgba(22,163,74,0.12)',   border: 'rgba(22,163,74,0.3)' }
+  if (score > 80) return { label: 'ความเสี่ยงสูง', short: 'CRITICAL', color: '#ef4444', bg: 'rgba(239,68,68,0.15)',   border: 'rgba(239,68,68,0.35)' }
+  if (score > 60) return { label: 'หนาแน่น',       short: 'HIGH',     color: '#f97316', bg: 'rgba(249,115,22,0.15)',  border: 'rgba(249,115,22,0.35)' }
+  if (score > 40) return { label: 'ปานกลาง',       short: 'MEDIUM',   color: '#eab308', bg: 'rgba(234,179,8,0.15)',   border: 'rgba(234,179,8,0.35)' }
+  if (score > 20) return { label: 'ใช้งานน้อย',    short: 'LOW',      color: '#22c55e', bg: 'rgba(34,197,94,0.12)',   border: 'rgba(34,197,94,0.3)' }
+  return           { label: 'ว่างมาก',         short: 'SAFE',     color: '#16a34a', bg: 'rgba(22,163,74,0.12)',   border: 'rgba(22,163,74,0.3)' }
 }
 
 function densityLabel(ratio) {
@@ -98,165 +97,107 @@ function BuiltinFloor2() {
   )
 }
 
-// ── Donut Chart ────────────────────────────────────────────────────────────
-function DonutChart({ zones }) {
-  if (zones.length === 0) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {Array.from({ length: 13 }, (_, i) => `กล้อง ${i + 1}`).map((name, i) => (
-          <ZoneDonut key={name} name={name} ratio={0} color="#3b82f6" />
-        ))}
-      </div>
-    )
-  }
+// ── Donut Item (Layer1.1 style) ──────────────────────────────────────────
+function DonutItem({ name, ratio, selected, onClick }) {
+  const pct = Math.round(Math.min(ratio, 1) * 100)
+  const color = ratio > 0 ? densityColor(ratio) : '#3b82f6'
+  const label = densityLabel(ratio)
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {zones.map((z, i) => (
-        <ZoneDonut key={z.name + i} name={z.name} ratio={z.ratio} color="#3b82f6" />
-      ))}
+    <div
+      onClick={onClick}
+      className="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all"
+      style={{
+        border: `1px solid ${selected ? color : '#0d2a25'}`,
+        background: selected ? '#08221f' : 'rgba(4,21,19,0.6)',
+      }}
+    >
+      <div className="relative flex-shrink-0 flex items-center justify-center" style={{ width: 56, height: 56 }}>
+        <svg width="56" height="56" style={{ transform: 'rotate(-90deg)' }} viewBox="0 0 36 36">
+          <circle cx="18" cy="18" r="15.915" fill="none" stroke="#0b221f" strokeWidth="3.5" />
+          <circle cx="18" cy="18" r="15.915" fill="none" stroke={color} strokeWidth="3.5"
+            strokeDasharray={`${pct} 100`} strokeLinecap="round" />
+        </svg>
+        <span className="absolute text-white font-bold" style={{ fontSize: 11 }}>{pct}%</span>
+      </div>
+      <div>
+        <div className="text-sm font-bold" style={{ color }}>{name}</div>
+        <div style={{ fontSize: 11, color: color + 'bb' }}>{label}</div>
+      </div>
     </div>
   )
 }
 
-function ZoneDonut({ name, ratio, color }) {
-  const pct = Math.round(Math.min(ratio, 1) * 100)
-  const r = 20, circ = 2 * Math.PI * r
-  const dash = Math.min(ratio, 1) * circ
-  const fillColor = ratio > 0 ? densityColor(ratio) : color
-
+// ── Risk Gauge (Layer1.1 style) ───────────────────────────────────────────
+function RiskGauge({ score, trend }) {
+  const { label, short, color } = riskMeta(score)
+  // 0% = ซ้าย (-90deg from top), 100% = ขวา (+90deg from top)
+  // needle line points left from center; rotate 0°→180° for 0→100
+  const needleDeg = (Math.min(score, 100) / 100) * 180
+  const trendLabel = trend > 0 ? 'เพิ่มขึ้น' : trend < 0 ? 'ลดลง' : 'คงที่'
+  const trendColor = trend > 0 ? '#ef4444' : trend < 0 ? '#22c55e' : '#6b7280'
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-      <div style={{ position: 'relative', flexShrink: 0 }}>
-        <svg width={48} height={48} viewBox="0 0 48 48">
-          <circle cx="24" cy="24" r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="5" />
-          <circle
-            cx="24" cy="24" r={r} fill="none"
-            stroke={fillColor}
-            strokeWidth="5"
-            strokeDasharray={`${dash} ${circ - dash}`}
-            strokeLinecap="round"
-            transform="rotate(-90 24 24)"
-            style={{ transition: 'stroke-dasharray 0.6s ease' }}
-          />
-          <text x="24" y="28" textAnchor="middle" fontSize="10" fill={fillColor} fontFamily="var(--mono)" fontWeight="700">
-            {pct}%
-          </text>
+    <div className="flex flex-col items-center gap-2 w-full">
+      <div className="relative w-full mx-auto" style={{ maxWidth: 220 }}>
+        <svg className="w-full" viewBox="0 0 200 140">
+          <defs>
+            <linearGradient id="gauge-grad-l1" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%"   stopColor="#10b981" />
+              <stop offset="40%"  stopColor="#f59e0b" />
+              <stop offset="75%"  stopColor="#f97316" />
+              <stop offset="100%" stopColor="#ef4444" />
+            </linearGradient>
+          </defs>
+          {/* Track */}
+          <path d="M 18 115 A 82 82 0 0 1 182 115" fill="none" stroke="#082320" strokeWidth="18" strokeLinecap="round" />
+          {/* Gradient arc */}
+          <path d="M 18 115 A 82 82 0 0 1 182 115" fill="none" stroke="url(#gauge-grad-l1)" strokeWidth="14" strokeLinecap="round" />
+          {/* Tick labels */}
+          <text x="10"  y="130" fill="#56817a" fontSize="10" textAnchor="middle" fontWeight="700">0</text>
+          <text x="40"  y="58"  fill="#56817a" fontSize="10" textAnchor="middle" fontWeight="700">25</text>
+          <text x="100" y="20"  fill="#56817a" fontSize="10" textAnchor="middle" fontWeight="700">50</text>
+          <text x="160" y="58"  fill="#56817a" fontSize="10" textAnchor="middle" fontWeight="700">75</text>
+          <text x="190" y="130" fill="#56817a" fontSize="10" textAnchor="middle" fontWeight="700">100</text>
+          {/* Needle */}
+          <g transform={`rotate(${needleDeg}, 100, 115)`}>
+            <line x1="100" y1="115" x2="22" y2="115" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" />
+            <polygon points="20,115 30,111 30,119" fill="#ffffff" />
+          </g>
+          {/* Pivot */}
+          <circle cx="100" cy="115" r="7" fill="#041210" stroke="#ffffff" strokeWidth="2.5" />
+          {/* Score */}
+          <text x="100" y="98" textAnchor="middle" fontSize="38" fontWeight="900" fill={color}
+            style={{ transition: 'fill 0.5s' }}>{score}</text>
         </svg>
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', lineHeight: 1.2 }}>{name}</div>
-        <div style={{ fontSize: 11, color: fillColor, marginTop: 2 }}>{densityLabel(ratio)}</div>
+      {/* Label */}
+      <div className="text-base font-bold tracking-wide" style={{ color, marginTop: -6 }}>{label}</div>
+      {/* Badge */}
+      <div className="px-5 py-1 rounded-md text-xs font-bold tracking-widest uppercase"
+        style={{ border: `1px solid ${color}99`, background: color + '18', color }}>
+        {short}
       </div>
-      <div style={{
-        fontSize: 11, fontFamily: 'var(--mono)', fontWeight: 600,
-        color: fillColor, background: `${fillColor}18`,
-        border: `1px solid ${fillColor}33`, borderRadius: 5, padding: '2px 8px', flexShrink: 0,
-      }}>
-        {pct}%
-      </div>
-    </div>
-  )
-}
-
-// ── Risk Gauge ─────────────────────────────────────────────────────────────
-function RiskGauge({ score, trend }) {
-  const risk = riskMeta(score)
-  // cx=130 centred in 260px viewBox; R=85; cy=108 leaves room below for score
-  const cx = 130, cy = 108, R = 85
-  const toRad = d => d * Math.PI / 180
-
-  function arc(a1, a2) {
-    const x1 = cx + R * Math.cos(toRad(a1)), y1 = cy + R * Math.sin(toRad(a1))
-    const x2 = cx + R * Math.cos(toRad(a2)), y2 = cy + R * Math.sin(toRad(a2))
-    return `M ${x1} ${y1} A ${R} ${R} 0 0 1 ${x2} ${y2}`
-  }
-
-  const zones = [
-    { from: -180, to: -144, color: '#16a34a' },
-    { from: -144, to: -108, color: '#22c55e' },
-    { from: -108, to:  -72, color: '#eab308' },
-    { from:  -72, to:  -36, color: '#f97316' },
-    { from:  -36, to:    0, color: '#ef4444' },
-  ]
-
-  const needleAngle = -180 + (Math.min(score, 100) / 100) * 180
-  // needle tip near arc edge
-  const nx = cx + (R - 6) * Math.cos(toRad(needleAngle))
-  const ny = cy + (R - 6) * Math.sin(toRad(needleAngle))
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, width: '100%' }}>
-      {/* viewBox 260×204 (top padded 14px): score at cy+54=176, fits all labels */}
-      <svg width="100%" viewBox="0 -14 260 204" style={{ display: 'block' }}>
-        {/* BG track */}
-        <path d={arc(-180, 0)} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="16" />
-        {/* Colour zones */}
-        {zones.map((z, i) => (
-          <path key={i} d={arc(z.from, z.to)} fill="none" stroke={z.color + 'cc'} strokeWidth="16" />
-        ))}
-        {/* Active glow progress */}
-        {score > 0 && (
-          <path d={arc(-180, needleAngle)} fill="none" stroke={risk.color} strokeWidth="4"
-            strokeLinecap="round"
-            style={{ filter: `drop-shadow(0 0 6px ${risk.color})`, transition: 'all 0.5s ease' }} />
-        )}
-        {/* Tick marks + labels outside arc */}
-        {[0, 25, 50, 75, 100].map(v => {
-          const a = -180 + (v / 100) * 180
-          const t1x = cx + (R + 2)  * Math.cos(toRad(a)), t1y = cy + (R + 2)  * Math.sin(toRad(a))
-          const t2x = cx + (R + 12) * Math.cos(toRad(a)), t2y = cy + (R + 12) * Math.sin(toRad(a))
-          const lx  = cx + (R + 24) * Math.cos(toRad(a)), ly  = cy + (R + 24) * Math.sin(toRad(a))
-          const anchor = v === 0 ? 'end' : v === 100 ? 'start' : 'middle'
-          return (
-            <g key={v}>
-              <line x1={t1x} y1={t1y} x2={t2x} y2={t2y}
-                stroke="rgba(255,255,255,0.3)" strokeWidth="1.5" />
-              <text x={lx} y={ly + 4} textAnchor={anchor}
-                fontSize="10" fill="rgba(255,255,255,0.55)" fontFamily="var(--mono)">{v}</text>
-            </g>
-          )
-        })}
-        {/* Needle — white, thin */}
-        <line x1={cx} y1={cy} x2={nx} y2={ny}
-          stroke="rgba(255,255,255,0.92)" strokeWidth="2.5" strokeLinecap="round"
-          style={{ transition: 'all 0.5s ease' }} />
-        {/* Pivot */}
-        <circle cx={cx} cy={cy} r={9} fill={risk.color}
-          style={{ transition: 'fill 0.5s ease' }} />
-        <circle cx={cx} cy={cy} r={4} fill="#0b0d11" />
-        {/* Large score — pushed well below pivot so it doesn't overlap needle */}
-        <text x={cx} y={cy + 54} textAnchor="middle" fontSize="42" fontWeight="700"
-          fill={risk.color} fontFamily="var(--mono)"
-          style={{ transition: 'fill 0.5s ease' }}>{score}</text>
-      </svg>
-      {/* Status badge */}
-      <div style={{
-        background: risk.bg, border: `1px solid ${risk.border}`,
-        borderRadius: 8, padding: '5px 22px', fontSize: 14, fontWeight: 700,
-        color: risk.color, letterSpacing: '.08em', marginTop: -14,
-      }}>
-        {risk.label}
+      {/* Trend */}
+      <div className="flex items-center gap-1.5 text-xs" style={{ color: '#56817a' }}>
+        <span>แนวโน้ม: {trendLabel}</span>
+        {trend !== 0 && <ArrowUpRight size={13} style={{ color: trendColor, transform: trend < 0 ? 'scaleY(-1)' : 'none' }} />}
       </div>
     </div>
   )
 }
 
-// ── Zone Heatmap SVG ───────────────────────────────────────────────────────
+// ── Zone Heatmap SVG ─────────────────────────────────────────────────────
 function ZoneHeatmap({ plan, camCounts, maxCount }) {
   if (!plan) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--muted)', fontSize: 13 }}>
+      <div className="flex items-center justify-center h-full text-xs" style={{ color: '#56817a' }}>
         ยังไม่มีแผนผัง — ตั้งค่าใน Heatmap Editor
       </div>
     )
   }
-
   const vbox = plan.vbox || '0 0 841.92 595.32'
-
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-
-      <svg viewBox={vbox} style={{ width: '100%', height: '100%', display: 'block' }}>
+    <div className="w-full h-full relative">
+      <svg viewBox={vbox} className="w-full h-full block">
         {plan.bg === 'builtin:floor2' && <BuiltinFloor2 />}
         {plan.bg !== 'builtin:floor2' && plan.bg !== 'blank' && (
           <image href={plan.bg} x="0" y="0" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" />
@@ -275,12 +216,12 @@ function ZoneHeatmap({ plan, camCounts, maxCount }) {
               {active && <polygon points={pts} fill="none" stroke={heatColor(ratio, 0.3)} strokeWidth="8" />}
               <polygon points={pts} fill={fill} stroke={stroke} strokeWidth={active ? '2.5' : '1.5'} />
               <text x={px} y={py - 6} textAnchor="middle" fill="rgba(255,255,255,0.9)" fontSize="13" fontWeight="700"
-                fontFamily="var(--sans)" style={{ filter: 'drop-shadow(0 1px 5px rgba(0,0,0,0.9))' }}>
+                fontFamily="sans-serif" style={{ filter: 'drop-shadow(0 1px 5px rgba(0,0,0,0.9))' }}>
                 {z.name}
               </text>
               {cnt > 0 && (
                 <text x={px} y={py + 10} textAnchor="middle" fill={heatColor(ratio, 1)} fontSize="11" fontWeight="600"
-                  fontFamily="var(--mono)" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }}>
+                  fontFamily="monospace" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }}>
                   {cnt} คน
                 </text>
               )}
@@ -292,31 +233,29 @@ function ZoneHeatmap({ plan, camCounts, maxCount }) {
   )
 }
 
-// ── Alert Card ─────────────────────────────────────────────────────────────
+// ── Alert Card (Layer1.1 style) ──────────────────────────────────────────
 function AlertCard({ level, title, detail, time }) {
   const cfg = {
-    critical: { bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.40)', color: '#ef4444', icon: '🔔' },
-    warn:     { bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.40)', color: '#f59e0b', icon: '⚠' },
-    info:     { bg: 'rgba(34,197,94,0.10)',  border: 'rgba(34,197,94,0.30)',  color: '#22c55e', icon: 'ℹ' },
+    critical: { bg: '#180a0a', border: '#7f1d1dcc', iconBg: 'rgba(127,29,29,0.4)',  iconColor: '#ef4444', Icon: Bell },
+    warn:     { bg: '#1c1205', border: '#78350fcc', iconBg: 'rgba(120,53,15,0.4)',  iconColor: '#f59e0b', Icon: AlertTriangle },
+    info:     { bg: '#051118', border: '#0369a1cc', iconBg: 'rgba(3,105,161,0.3)',  iconColor: '#38bdf8', Icon: Info },
   }
   const s = cfg[level] || cfg.info
+  const { Icon } = s
   return (
-    <div style={{
-      background: s.bg, border: `1px solid ${s.border}`, borderRadius: 10,
-      padding: '10px 14px', display: 'flex', alignItems: 'flex-start', gap: 10, minWidth: 0,
-    }}>
-      <div style={{
-        width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
-        background: `${s.color}22`, border: `1.5px solid ${s.color}88`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16,
-      }}>{s.icon}</div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: s.color, lineHeight: 1.3 }}>{title}</div>
-          <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'var(--mono)', flexShrink: 0 }}>{time}</div>
+    <div className="rounded-lg p-3 flex justify-between items-center transition-all"
+      style={{ background: s.bg, border: `1px solid ${s.border}` }}>
+      <div className="flex items-center gap-3">
+        <div className="rounded-full flex items-center justify-center flex-shrink-0"
+          style={{ width: 36, height: 36, background: s.iconBg }}>
+          <Icon size={18} style={{ color: s.iconColor }} />
         </div>
-        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)', marginTop: 3, lineHeight: 1.4 }}>{detail}</div>
+        <div>
+          <div className="text-xs font-bold text-white">{title}</div>
+          <div className="text-gray-400 mt-0.5" style={{ fontSize: 10 }}>{detail}</div>
+        </div>
       </div>
+      <span className="text-gray-500 font-medium flex-shrink-0 ml-2" style={{ fontSize: 10 }}>{time}</span>
     </div>
   )
 }
@@ -333,6 +272,7 @@ export default function Layer1() {
   const [updateTime, setUpdateTime] = useState('—')
   const [maxCount, setMaxCount]   = useState(1)
   const [prevTotal, setPrevTotal] = useState(0)
+  const [selectedZone, setSelectedZone] = useState(null)
   const abortRef = useRef(null)
 
   // Fetch plans from gateway (overrides localStorage when available)
@@ -366,11 +306,7 @@ export default function Layer1() {
       setCameras(data)
       setCamCounts(counts)
       setUpdateTime(new Date().toLocaleTimeString('th-TH'))
-      setPrevTotal(prev => {
-        const newTotal = data.reduce((s, c) => s + (c.total_people || 0), 0)
-        setPrevTotal(newTotal)
-        return prev
-      })
+      setPrevTotal(data.reduce((s, c) => s + (c.total_people || 0), 0))
     } catch (e) {
       if (e.name !== 'AbortError') console.warn('fetch error', e)
     }
@@ -398,14 +334,12 @@ export default function Layer1() {
   const zoneSummary = Array.from({ length: 13 }, (_, i) => {
     const cam = orderedCameras[i]
     const count = cam?.total_people || 0
-    const capacity = DEFAULT_CAPACITY
-    const ratio = Math.min(count / capacity, 1)
-    return { name: `กล้อง ${i + 1}`, color: '#3b82f6', count, capacity, ratio, running: cam?.running || false }
+    const ratio = Math.min(count / DEFAULT_CAPACITY, 1)
+    return { name: `กล้อง ${i + 1}`, count, ratio, running: cam?.running || false }
   })
 
-  // Risk score = รวมทุกกล้อง / ความจุรวมทั้งหมด × 100
   const totalCount    = zoneSummary.reduce((s, z) => s + z.count, 0)
-  const totalCapacity = zoneSummary.reduce((s, z) => s + z.capacity, 0)
+  const totalCapacity = zoneSummary.length * DEFAULT_CAPACITY
   const riskScore     = totalCapacity > 0 ? Math.round((totalCount / totalCapacity) * 100) : 0
 
   const grandTotal = cameras.reduce((s, c) => s + (c.total_people || 0), 0)
@@ -450,136 +384,129 @@ export default function Layer1() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="page">
-      <Header title="LAYER 1: GREEDY — REAL-TIME DECISION">
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14 }}>
-          <span style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
-            ทั้งหมด {grandTotal} คน
-          </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
-            <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--success)', boxShadow: '0 0 5px var(--success)', display: 'inline-block', animation: 'pulse 2s infinite' }} />
-            {updateTime}
-          </div>
-        </div>
-      </Header>
+    <div className="min-h-screen w-full select-none"
+      style={{ background: '#030d0c', color: '#e2f1ee', fontFamily: "'Sarabun', sans-serif" }}>
 
-      {/* ── Responsive styles ──────────────────────────────────────────── */}
-      <style>{`
-        .l1-donut::-webkit-scrollbar { display: none; }
-        .l1-grid {
-          flex: 1; overflow: hidden;
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          grid-template-rows: 1fr auto;
-          gap: 12px;
-          padding: 12px 14px;
-          min-height: 0;
-          align-content: start;
-        }
-        .l1-alert { grid-column: 1 / -1; }
-        /* Tablet: donut + gauge บน, heatmap เต็มแถวล่าง */
-        @media (max-width: 860px) {
-          .l1-grid { grid-template-columns: repeat(2, 1fr); padding: 10px; gap: 10px; }
-          .l1-col-heatmap { grid-column: 1 / -1; max-height: 300px; }
-        }
-        /* Mobile: สแตกทั้งหมด */
-        @media (max-width: 540px) {
-          .l1-grid { grid-template-columns: 1fr; padding: 8px; gap: 8px; }
-          .l1-col-heatmap { grid-column: 1; max-height: 240px; }
-          .l1-col-donut { max-height: 300px; }
-          .l1-col-gauge { max-height: 300px; overflow: hidden; }
-        }
-      `}</style>
+      <div className="w-full min-h-screen flex items-start justify-center p-2 sm:p-4 md:p-6">
+        <div className="w-full max-w-[1200px] rounded-2xl border-2 p-5 sm:p-6 relative overflow-hidden"
+          style={{ background: '#041210', borderColor: '#123933', boxShadow: '0 0 40px rgba(4,30,26,0.8)' }}>
 
-      {/* Subtitle bar */}
-      <div style={{
-        padding: '0 24px', height: 32, display: 'flex', alignItems: 'center',
-        background: 'rgba(59,130,246,0.06)', borderBottom: '1px solid rgba(59,130,246,0.12)',
-        flexShrink: 0,
-      }}>
-        <span style={{ fontSize: 11, color: 'rgba(96,165,250,0.8)', letterSpacing: '.08em', fontWeight: 500 }}>
-          เลือกสิ่งที่ดีที่สุด ณ เวลาปัจจุบัน เพื่อตอบสนองและแจ้งเตือนทันที
-        </span>
-      </div>
+          {/* Background glow blobs */}
+          <div className="absolute -top-40 -left-40 w-96 h-96 rounded-full pointer-events-none"
+            style={{ background: 'rgba(16,185,129,0.05)', filter: 'blur(120px)' }} />
+          <div className="absolute -bottom-40 -right-40 w-96 h-96 rounded-full pointer-events-none"
+            style={{ background: 'rgba(0,163,255,0.05)', filter: 'blur(120px)' }} />
 
-      {/* ── Main grid ─────────────────────────────────────────────────────── */}
-      <div className="l1-grid">
-
-          {/* ── Col 1: Donut Charts ───────────────────────────────────────── */}
-          <div className="l1-donut l1-col-donut" style={{
-            background: 'var(--surface)', borderRadius: 12, border: '1px solid var(--border)',
-            padding: '16px 18px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14,
-            scrollbarWidth: 'none', minHeight: 0,
-          }}>
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>
-                1. DONUT CHART
+          {/* ── HEADER ───────────────────────────────────────────────── */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 pb-4"
+            style={{ borderBottom: '1px solid rgba(13,46,41,0.5)' }}>
+            <div className="flex items-center gap-3">
+              <div className="relative flex items-center justify-center flex-shrink-0">
+                <div className="absolute w-12 h-12 rounded-full opacity-75"
+                  style={{ background: 'rgba(16,185,129,0.15)',
+                    animation: 'ping 1.5s cubic-bezier(0,0,0.2,1) infinite' }} />
+                <div className="w-11 h-11 rounded-full flex items-center justify-center z-10 relative"
+                  style={{ background: '#10b981', boxShadow: '0 0 20px rgba(16,185,129,0.5)' }}>
+                  <Zap size={22} fill="black" color="black" strokeWidth={1.5} />
+                </div>
               </div>
-              <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginBottom: 10 }}>ความหนาแน่นของกล้อง (Real-time)</div>
+              <div>
+                <h1 className="text-lg sm:text-xl font-extrabold tracking-wider text-white flex flex-wrap items-center gap-2">
+                  <span>LAYER 1: GREEDY</span>
+                  <span className="font-medium text-sm sm:text-base" style={{ color: '#9ca3af' }}>(REAL-TIME DECISION)</span>
+                </h1>
+                <p className="text-xs font-light mt-0.5" style={{ color: '#6fa39b' }}>
+                  เลือกสิ่งที่ดีที่สุด ณ เวลาปัจจุบัน เพื่อการตอบสนองและแจ้งเตือนทันที
+                </p>
+              </div>
             </div>
-            <DonutChart zones={zoneSummary} />
-            {zoneSummary.length === 0 && (
-              <div style={{ fontSize: 11, color: 'var(--muted)', textAlign: 'center', marginTop: 8 }}>
-                ตั้งค่าโซนใน Heatmap Editor
+            <div className="flex items-center gap-3 self-end sm:self-auto flex-wrap justify-end">
+              <span className="text-xs font-mono" style={{ color: '#56817a' }}>ทั้งหมด {grandTotal} คน</span>
+              <span className="text-xs font-semibold tracking-widest border px-2.5 py-1 rounded-md uppercase"
+                style={{ color: '#06b6d4', borderColor: 'rgba(6,182,212,0.3)', background: 'rgba(6,182,212,0.05)' }}>
+                ระบบเชิงคาดการณ์และป้องกันล่วงหน้า
+              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full inline-block"
+                  style={{ background: '#22c55e', boxShadow: '0 0 5px #22c55e' }} />
+                <span className="text-xs font-mono" style={{ color: '#56817a' }}>{updateTime}</span>
               </div>
-            )}
+            </div>
           </div>
 
-          {/* ── Col 2: Gauge ──────────────────────────────────────────────── */}
-          <div className="l1-col-gauge" style={{
-            background: 'var(--surface)', borderRadius: 12, border: '1px solid var(--border)',
-            padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 12, overflow: 'hidden',
-          }}>
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>
-                2. GAUGE (RISK LEVEL)
+          {/* ── MAIN 3-COLUMN GRID ────────────────────────────────────── */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
+
+            {/* COL 1: DONUT CHART */}
+            <div className="rounded-xl p-4 flex flex-col gap-3 transition-all duration-300"
+              style={{ background: '#051715', border: '1px solid #0d2e29' }}>
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <div className="text-xs font-bold tracking-wider" style={{ color: '#d1d5db' }}>1. DONUT CHART</div>
+                  <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#22c55e' }} />
+                </div>
+                <div className="text-[10px] mb-2" style={{ color: '#56817a' }}>ความหนาแน่นของกล้อง (Real-time)</div>
               </div>
-              <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginBottom: 10 }}>ระดับความเสี่ยง (Real-time)</div>
+              <div className="flex flex-col gap-2 overflow-y-auto" style={{ maxHeight: 400, scrollbarWidth: 'none' }}>
+                {zoneSummary.map(z => (
+                  <DonutItem key={z.name} name={z.name} ratio={z.ratio}
+                    selected={selectedZone === z.name}
+                    onClick={() => setSelectedZone(selectedZone === z.name ? null : z.name)} />
+                ))}
+              </div>
             </div>
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 0 }}>
-              <div style={{ width: '100%', maxWidth: 320 }}>
+
+            {/* COL 2: GAUGE */}
+            <div className="rounded-xl p-4 flex flex-col items-center transition-all duration-300"
+              style={{ background: '#051715', border: '1px solid #0d2e29' }}>
+              <div className="w-full text-left mb-2">
+                <div className="text-xs font-bold tracking-wider" style={{ color: '#d1d5db' }}>2. GAUGE (RISK LEVEL)</div>
+                <div className="text-[10px]" style={{ color: '#56817a' }}>ระดับความเสี่ยง (Real-time)</div>
+              </div>
+              <div className="flex-1 flex items-center justify-center w-full py-2">
                 <RiskGauge score={riskScore} trend={trend} />
               </div>
             </div>
+
+            {/* COL 3: HEATMAP */}
+            <div className="rounded-xl p-4 flex flex-col gap-3 transition-all duration-300"
+              style={{ background: '#051715', border: '1px solid #0d2e29' }}>
+              <div>
+                <div className="text-xs font-bold tracking-wider" style={{ color: '#d1d5db' }}>3. HEATMAP (ZONE MAP)</div>
+                <div className="text-[10px] mb-1" style={{ color: '#56817a' }}>แผนที่ความหนาแน่น (Real-time)</div>
+              </div>
+              <div className="flex-1 rounded-lg overflow-hidden"
+                style={{ background: '#030f0e', border: '1px solid rgba(13,46,41,0.6)', minHeight: 260 }}>
+                <ZoneHeatmap plan={activePlan} camCounts={camCounts} maxCount={maxCount} />
+              </div>
+            </div>
+
           </div>
 
-          {/* ── Col 3: Heatmap ────────────────────────────────────────────── */}
-          <div className="l1-col-heatmap" style={{
-            background: 'var(--surface)', borderRadius: 12, border: '1px solid var(--border)',
-            padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10, overflow: 'hidden',
-          }}>
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>
-                3. HEATMAP (ZONE MAP)
+          {/* ── ALERTS ──────────────────────────────────────────────── */}
+          <div style={{ borderTop: '1px solid #0d2e29', paddingTop: 20 }}>
+            <div className="flex items-center justify-center gap-3 mb-4">
+              <div className="h-px flex-1"
+                style={{ background: 'linear-gradient(to right, transparent, rgba(132,204,22,0.4))' }} />
+              <div className="text-xs font-bold tracking-[0.25em] uppercase flex items-center gap-2"
+                style={{ color: '#84cc16' }}>
+                <span className="inline-block w-2 h-2 rounded-full" style={{ background: '#84cc16' }} />
+                REAL-TIME NOTIFICATION &amp; PREVENTIVE ALERT
               </div>
-              <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginBottom: 6 }}>แผนที่ความหนาแน่น (Real-time)</div>
+              <div className="h-px flex-1"
+                style={{ background: 'linear-gradient(to left, transparent, rgba(132,204,22,0.4))' }} />
             </div>
-            <div style={{ flex: 1, background: 'var(--bg)', borderRadius: 10, border: '1px solid var(--border)', overflow: 'hidden', minHeight: 0 }}>
-              <ZoneHeatmap plan={activePlan} camCounts={camCounts} maxCount={maxCount} />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {alerts.slice(0, 3).map((a, i) => (
+                <AlertCard key={i} level={a.level} title={a.title} detail={a.detail} time={a.time} />
+              ))}
             </div>
           </div>
 
-        {/* ── Notification & Alert Section ──────────────────────────── */}
-        <div className="l1-alert" style={{
-          background: 'var(--surface)', borderRadius: 12,
-          border: '1px solid var(--border)', padding: '10px 16px 14px',
-        }}>
-          <div style={{
-            fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase',
-            color: '#f59e0b', textAlign: 'center', marginBottom: 8,
-            padding: '4px 0', borderBottom: '1px solid rgba(245,158,11,0.2)',
-          }}>
-            REAL-TIME NOTIFICATION &amp; PREVENTIVE ALERT
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
-            {alerts.map((a, i) => (
-              <div key={i} style={{ flex: '1 1 260px', maxWidth: 360 }}>
-                <AlertCard level={a.level} title={a.title} detail={a.detail} time={a.time} />
-              </div>
-            ))}
-          </div>
         </div>
       </div>
+
+      <style>{`@keyframes ping { 75%,100% { transform:scale(2); opacity:0 } }`}</style>
     </div>
   )
 }

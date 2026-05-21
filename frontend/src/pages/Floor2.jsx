@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import Header from '../components/Header.jsx'
 
 const STORAGE_KEY = 'floor2_zones'
+const PREVIEW_CAM1_KEY = 'preview_cam1_id'
 const T = 'matrix(0,-.75,.75,0,-.000061035159,595.32)'
 const PALETTE = ['#3b82f6','#22c55e','#f59e0b','#ef4444','#a855f7','#06b6d4','#ec4899','#84cc16','#f97316','#14b8a6']
 
@@ -78,7 +79,8 @@ export default function Floor2() {
 
   /* ── Edit mode state ──────────────────────────────────────────────────────── */
   const [editMode, setEditMode] = useState(false)
-  const [drawing, setDrawing] = useState([])        // [[x,y]…] SVG-space points in progress
+  /* ── Preview Camera 1 (for Layer1.1 preview page) ─────────────────── */
+  const [previewCam1, setPreviewCam1] = useState(() => localStorage.getItem(PREVIEW_CAM1_KEY) || '')  const [drawing, setDrawing] = useState([])        // [[x,y]…] SVG-space points in progress
   const [mousePos, setMousePos] = useState(null)    // live cursor for rubber-band line
   const [pendingPts, setPendingPts] = useState(null) // finished polygon awaiting config
   const [newName, setNewName] = useState('')
@@ -176,6 +178,23 @@ export default function Floor2() {
   return (
     <div className="page">
       <Header title="FLOOR 2 – HEATMAP">
+        {/* Preview Camera 1 selector */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 8 }}>
+          <label style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Preview กล้อง 1:</label>
+          <select
+            value={previewCam1}
+            onChange={e => {
+              setPreviewCam1(e.target.value)
+              localStorage.setItem(PREVIEW_CAM1_KEY, e.target.value)
+            }}
+            style={{ fontSize: 11, padding: '3px 6px', background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer' }}
+          >
+            <option value="">— ไม่ได้เลือก —</option>
+            {cameras.map(c => (
+              <option key={c.id} value={c.id}>{c.id}{c.name ? ` – ${c.name}` : ''}</option>
+            ))}
+          </select>
+        </div>
         {/* Edit toggle */}
         <button
           onClick={() => { setEditMode(m => !m); setDrawing([]); setPendingPts(null) }}

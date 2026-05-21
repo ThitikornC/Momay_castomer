@@ -1,3 +1,6 @@
+@tailwind components;
+@tailwind utilities;
+
 /* ─── CSS Variables ──────────────────────────────────────────────────────────── */
 :root {
   --bg: #0b0d11;
