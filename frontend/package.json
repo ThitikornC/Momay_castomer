@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:greedy": "vite build --config vite.config.greedy.js",
+    "build:dp": "vite build --config vite.config.dp.js",
     "preview": "vite preview",
     "start": "vite preview --host"
   },
