@@ -254,11 +254,10 @@ export default function RelationshipLayer() {
 
         {/* ── Floor Plan Viewer ── */}
         <div
-          ref={viewerRef}
           className="flex items-center justify-center py-4 px-6"
           style={{ height: FIXED_H + 48 }}
         >
-          <div className="relative" style={{ width: FLOOR_W, height: FIXED_H }}>
+          <div ref={viewerRef} className="relative" style={{ width: FLOOR_W, height: FIXED_H }}>
             {/* Render floors bottom (ชั้น 1) first so upper floors overlap correctly */}
             {FLOORS.map((floor, i) => {
               const isSelected  = i === selectedFloor
