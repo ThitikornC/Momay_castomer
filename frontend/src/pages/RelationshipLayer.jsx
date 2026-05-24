@@ -62,6 +62,17 @@ function _computeCells(gridPath, boundary) {
   return out
 }
 
+// ── Per-floor seeds — each floor is truly independent ─────────────────────
+// (different frequencies + starting phase → no visual correlation between floors)
+const FLOOR_SEEDS = [
+  { fa:0.28, fb:0.21, fc:0.14, fd:0.33, fe:0.09, t0:0.0  },
+  { fa:0.31, fb:0.17, fc:0.19, fd:0.27, fe:0.13, t0:41.7 },
+  { fa:0.22, fb:0.25, fc:0.11, fd:0.38, fe:0.07, t0:83.2 },
+  { fa:0.35, fb:0.18, fc:0.16, fd:0.29, fe:0.11, t0:17.5 },
+  { fa:0.19, fb:0.30, fc:0.23, fd:0.21, fe:0.15, t0:62.4 },
+  { fa:0.26, fb:0.23, fc:0.12, fd:0.31, fe:0.08, t0:55.1 },
+]
+
 // Fetch SVG once → parse exact boundary polygon + grid lines → compute cells
 const _CELLS_PROMISE = fetch('/Floorplan/HeatmapgridFloor1.svg')
   .then(r => r.text())
@@ -75,30 +86,55 @@ const _CELLS_PROMISE = fetch('/Floorplan/HeatmapgridFloor1.svg')
     return _computeCells(gridPath, boundary)
   })
 
-function HeatmapAnimatedCanvas({ floorIdx, opacity }) {
+// ─────────────────────────────────────────────────────────────────────────────
+// HeatmapAnimatedCanvas
+//
+// Props:
+//   floorIdx  — 0-based floor index
+//   apiValues — Float32Array | null
+//               null  → animated mock data (each floor independent)
+//               array → real data: one value per cell, normalized 0..1
+//                       (set from API response when ready)
+//   opacity   — SVG overlay opacity
+// ─────────────────────────────────────────────────────────────────────────────
+function HeatmapAnimatedCanvas({ floorIdx, apiValues = null, opacity }) {
   const [cells, setCells] = useState([])
   const polyRefs = useRef([])
   const raf = useRef(null)
+  // Use ref so animation loop always reads latest API data without restarting
+  const apiRef = useRef(apiValues)
+  useEffect(() => { apiRef.current = apiValues }, [apiValues])
 
-  // Load cells once (shared promise — all floors reuse same data)
+  // Load cells once (shared promise — all floors reuse same grid geometry)
   useEffect(() => {
     _CELLS_PROMISE.then(setCells)
   }, [])
 
-  // Start/restart animation when cells are ready or floorIdx changes
+  // Animation loop — restarts only when cells or floorIdx changes
   useEffect(() => {
     if (!cells.length) return
-    let t = floorIdx * 17.3
+    const seed = FLOOR_SEEDS[floorIdx] ?? FLOOR_SEEDS[0]
+    let t = seed.t0
     let running = true
     function draw() {
       t += 0.013
+      const ext = apiRef.current   // real API data (null while not yet available)
       for (let idx = 0; idx < cells.length; idx++) {
-        const [r, c] = cells[idx]
-        const h = (
-          Math.sin(r*0.28 + c*0.21 + t)               * 0.40 +
-          Math.cos(r*0.14 - c*0.33 + t*1.3)            * 0.35 +
-          Math.sin((r-c)*0.09 + t*0.75 + floorIdx*0.9) * 0.25 + 1
-        ) / 2
+        let h
+        if (ext) {
+          // ── REAL DATA: value already normalized 0..1 ──────────────────
+          // TODO: replace mock with: const res = await fetch(`/api/heatmap/floor/${floorIdx}`)
+          //       then setFloorApiData(floorIdx, new Float32Array(res.json().values))
+          h = Math.max(0, Math.min(1, ext[idx] ?? 0))
+        } else {
+          // ── MOCK: independent animated pattern per floor ───────────────
+          const [r, c] = cells[idx]
+          h = (
+            Math.sin(r*seed.fa + c*seed.fb + t)      * 0.40 +
+            Math.cos(r*seed.fc - c*seed.fd + t*1.3)  * 0.35 +
+            Math.sin((r-c)*seed.fe + t*0.75)          * 0.25 + 1
+          ) / 2
+        }
         const poly = polyRefs.current[idx]
         if (poly) poly.setAttribute('fill', HEAT_PALETTE[Math.round(h*(HEAT_PALETTE.length-1))])
       }
@@ -134,6 +170,61 @@ function HeatmapAnimatedCanvas({ floorIdx, opacity }) {
   )
 }
 
+// ── 8-bit pixel skeleton (shown while floor images load) ────────────────────
+function PixelSkeleton({ show }) {
+  return (
+    <div
+      style={{
+        position: 'absolute', inset: 0, zIndex: 50,
+        transition: 'opacity 0.7s ease',
+        opacity: show ? 1 : 0,
+        pointerEvents: show ? 'auto' : 'none',
+        overflow: 'hidden',
+        borderRadius: 4,
+      }}
+    >
+      {/* Checkerboard pixel background */}
+      <div style={{
+        position: 'absolute', inset: 0,
+        backgroundImage: 'repeating-conic-gradient(#17031d 0% 25%, #0b0213 0% 50%)',
+        backgroundSize: '8px 8px',
+      }}/>
+      {/* Scan line sweep */}
+      <div className="pixel-scan" style={{
+        position: 'absolute', inset: 0,
+        background: 'linear-gradient(to bottom, transparent 0%, rgba(217,70,239,0.18) 50%, transparent 100%)',
+        backgroundSize: '100% 60px',
+      }}/>
+      {/* Floor placeholder bars */}
+      {[0,1,2,3,4,5].map(i => (
+        <div key={i} style={{
+          position: 'absolute',
+          left: '8%',
+          top: `${10 + i * 14}%`,
+          width: '84%',
+          height: '9%',
+          backgroundImage: 'repeating-conic-gradient(#25063a 0% 25%, #160330 0% 50%)',
+          backgroundSize: '4px 4px',
+          border: '1px solid rgba(217,70,239,0.3)',
+        }}/>
+      ))}
+      {/* 8-bit loading text */}
+      <div className="pixel-blink" style={{
+        position: 'absolute', bottom: 10, left: '50%',
+        transform: 'translateX(-50%)',
+        fontFamily: '"Courier New", Courier, monospace',
+        fontSize: 10,
+        color: '#d946ef',
+        letterSpacing: 4,
+        textShadow: '0 0 6px rgba(217,70,239,0.8)',
+        whiteSpace: 'nowrap',
+      }}>
+        ▓ LOADING ▓
+      </div>
+    </div>
+  )
+}
+
 const FLOORS = [
   { id: 1, img: '/Floorplan/Floor1plan.png', heatmap: '/Floorplan/HeatmapgridFloor1.svg' },
   { id: 2, img: '/Floorplan/Floor2plan.png', heatmap: '/Floorplan/HeatmapgridFloor2.svg' },
@@ -156,6 +247,20 @@ const IMG_RATIO = 1.0   // PNG images are square (1024×1024)
 export default function RelationshipLayer() {
   const [stage, setStage]           = useState('stacked')
   const [selectedFloor, setSelected] = useState(2)   // 0-based index
+
+  // ── Per-floor API data (null = use mock animation) ──────────────────────
+  // When real API is ready, replace null entries with Float32Array(cells.length)
+  // Example fetch:
+  //   const res = await fetch(`/api/heatmap/floor/${floorIdx}`)
+  //   const { values } = await res.json()  // values: number[] normalized 0..1
+  //   setFloorApiData(prev => { const n=[...prev]; n[floorIdx]=new Float32Array(values); return n })
+  const [floorApiData] = useState(() => Array(FLOORS.length).fill(null))
+  // ────────────────────────────────────────────────────────────────────────
+
+  // Track how many floor plan images have loaded → show skeleton until all ready
+  const [loadedCount, setLoadedCount] = useState(0)
+  const allLoaded = loadedCount >= FLOORS.length
+
   const idleTimer = useRef(null)
   const viewerRef = useRef(null)
 
@@ -178,6 +283,33 @@ export default function RelationshipLayer() {
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
+  }, [resetIdle])
+
+  // Non-passive touch listener for mobile swipe (vertical swipe = change floor)
+  useEffect(() => {
+    const el = viewerRef.current
+    if (!el) return
+    let startY = 0
+    const onTouchStart = e => {
+      startY = e.touches[0].clientY
+    }
+    const onTouchMove = e => {
+      e.preventDefault()  // stop page scroll while swiping on image
+      const dy = startY - e.touches[0].clientY
+      if (Math.abs(dy) > 18) {
+        const dir = dy > 0 ? 1 : -1   // swipe up = higher floor, swipe down = lower floor
+        setSelected(prev => Math.max(0, Math.min(FLOORS.length - 1, prev + dir)))
+        setStage('single')
+        resetIdle()
+        startY = e.touches[0].clientY  // reset so each 18px = one step
+      }
+    }
+    el.addEventListener('touchstart', onTouchStart, { passive: true })
+    el.addEventListener('touchmove',  onTouchMove,  { passive: false })
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart)
+      el.removeEventListener('touchmove',  onTouchMove)
+    }
   }, [resetIdle])
 
   useEffect(() => {
@@ -258,6 +390,8 @@ export default function RelationshipLayer() {
           style={{ height: FIXED_H + 48 }}
         >
           <div ref={viewerRef} className="relative" style={{ width: FLOOR_W, height: FIXED_H }}>
+            {/* 8-bit skeleton — fades out once all floor images are loaded */}
+            <PixelSkeleton show={!allLoaded} />
             {/* Render floors bottom (ชั้น 1) first so upper floors overlap correctly */}
             {FLOORS.map((floor, i) => {
               const isSelected  = i === selectedFloor
@@ -265,20 +399,24 @@ export default function RelationshipLayer() {
               const isInactive  = isSingle && !isSelected
               const isHighlight = stage === 'exploded' && isSelected
 
+              // Pure transform positioning — only `transform` animates (GPU compositor, no layout jitter)
+              const ty = isSingle && isSelected ? Math.round((FIXED_H - imgH) / 2) : floorY(i)
+              const sc = isSingle && isSelected ? 1.7 : 1
+
               return (
                 <div
                   key={floor.id}
                   onClick={() => stage === 'stacked' ? setStage('exploded') : handleFloorClick(i)}
                   style={{
                     position: 'absolute',
-                    left: isSingle && isSelected ? '50%' : 0,
-                    top: isSingle && isSelected ? Math.round((FIXED_H - imgH) / 2) : floorY(i),
-                    transform: isSingle && isSelected
-                      ? 'translateX(-50%) scale(1.7)'
-                      : 'scale(1)',
+                    left: 0,
+                    top: 0,
                     width: FLOOR_W,
                     zIndex: isSingle && isSelected ? 20 : i + 1,
-                    transition: 'top 0.5s ease, left 0.5s ease, opacity 0.4s ease, transform 0.5s ease, filter 0.4s ease',
+                    transform: `translate(0, ${ty}px) scale(${sc})`,
+                    transformOrigin: '50% 50%',
+                    willChange: 'transform, opacity',
+                    transition: 'transform 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.4s ease, filter 0.4s ease',
                     opacity: isInactive ? 0 : 1,
                     cursor: 'pointer',
                     filter: isHighlight
@@ -292,12 +430,14 @@ export default function RelationshipLayer() {
                   <img
                     src={floor.img}
                     alt={floor.label}
+                    onLoad={() => setLoadedCount(c => c + 1)}
                     style={{ width: '100%', display: 'block', imageRendering: 'auto', transform: 'scale(1.03)', transformOrigin: 'top left' }}
                     draggable={false}
                   />
                   {/* Animated heatmap colors (multiply under grid lines) */}
                   <HeatmapAnimatedCanvas
                     floorIdx={i}
+                    apiValues={floorApiData[i]}
                     opacity={stage === 'stacked' ? 0.4 : isInactive ? 0 : 0.88}
                   />
                   {/* Heatmap grid overlay */}

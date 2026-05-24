@@ -16,6 +16,12 @@ function heatColor(ratio, alpha = 0.45) {
   return `rgba(${r},${g},${b},${alpha})`
 }
 
+const DP_ZONE_ROWS = [
+  [0.10, 0.15, 0.25, 0.45, 0.60, 0.72, 0.82, 0.90, 0.85, 0.75, 0.60, 0.48, 0.35, 0.20, 0.12, 0.08],
+  [0.10, 0.12, 0.20, 0.30, 0.42, 0.55, 0.65, 0.72, 0.75, 0.82, 0.65, 0.52, 0.40, 0.25, 0.15, 0.10],
+  [0.20, 0.32, 0.50, 0.72, 0.88, 0.82, 0.75, 0.65, 0.72, 0.85, 0.90, 0.72, 0.55, 0.38, 0.25, 0.18],
+]
+
 const smooth = pts => {
   let d = `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`
   for (let i = 0; i < pts.length - 1; i++) {
@@ -231,26 +237,51 @@ export default function LayerDP() {
                 พฤติกรรมการใช้งาน <span className="text-gray-500 font-normal normal-case">(TIME X ZONE)</span>
               </p>
             </div>
-            <svg viewBox="0 0 270 130" className="w-full flex-1" style={{ minHeight: 0 }}>
+            <svg viewBox="0 0 270 130" className="w-full flex-1" style={{ minHeight: 0 }} shapeRendering="crispEdges">
+              <defs>
+                <linearGradient id="dpCellSheen" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%"   stopColor="#ffffff" stopOpacity="0.28"/>
+                  <stop offset="40%"  stopColor="#ffffff" stopOpacity="0.04"/>
+                  <stop offset="100%" stopColor="#000000" stopOpacity="0.28"/>
+                </linearGradient>
+                <pattern id="dpCellGrid" width="3" height="4" patternUnits="userSpaceOnUse">
+                  <line x1="3" y1="0" x2="3" y2="4" stroke="rgba(0,0,0,0.22)" strokeWidth="0.45"/>
+                  <line x1="0" y1="4" x2="3" y2="4" stroke="rgba(0,0,0,0.22)" strokeWidth="0.45"/>
+                </pattern>
+                {DP_ZONE_ROWS.flatMap((row, ri) => row.map((v, ci) => (
+                  <linearGradient key={`dpGrad-${ri}-${ci}`} id={`dpGrad-${ri}-${ci}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%"   stopColor={heatColor(Math.min(1, v + 0.10), 1)}/>
+                    <stop offset="100%" stopColor={heatColor(Math.max(0, v - 0.10), 1)}/>
+                  </linearGradient>
+                )))}
+              </defs>
               {['A', 'B', 'C'].map((z, i) => (
-                <text key={z} x="28" y={18 + i * 28} fill="#94a3b8" fontSize="7" textAnchor="end" dominantBaseline="middle">
+                <text key={z} x="28" y={18 + i * 28} fill="#94a3b8" fontSize="7" textAnchor="end" dominantBaseline="middle" shapeRendering="auto">
                   โซน {z}
                 </text>
               ))}
-              {[
-                [0.10, 0.15, 0.25, 0.45, 0.60, 0.72, 0.82, 0.90, 0.85, 0.75, 0.60, 0.48, 0.35, 0.20, 0.12, 0.08],
-                [0.10, 0.12, 0.20, 0.30, 0.42, 0.55, 0.65, 0.72, 0.75, 0.82, 0.65, 0.52, 0.40, 0.25, 0.15, 0.10],
-                [0.20, 0.32, 0.50, 0.72, 0.88, 0.82, 0.75, 0.65, 0.72, 0.85, 0.90, 0.72, 0.55, 0.38, 0.25, 0.18],
-              ].map((row, ri) => row.map((v, ci) => (
-                <rect key={`${ri}-${ci}`}
-                  x={30 + ci * 15} y={5 + ri * 28}
-                  width="14.5" height="27"
-                  rx="2"
-                  fill={heatColor(v, 0.88)}
-                />
+              {DP_ZONE_ROWS.map((row, ri) => row.map((v, ci) => (
+                <g key={`${ri}-${ci}`}>
+                  <rect
+                    x={30 + ci * 15} y={5 + ri * 28}
+                    width="13" height="26" rx="1"
+                    fill={`url(#dpGrad-${ri}-${ci})`}
+                    stroke="#020a17" strokeWidth="0.8"
+                  />
+                  <rect
+                    x={30 + ci * 15} y={5 + ri * 28}
+                    width="13" height="26" rx="1"
+                    fill="url(#dpCellGrid)" pointerEvents="none"
+                  />
+                  <rect
+                    x={30 + ci * 15} y={5 + ri * 28}
+                    width="13" height="26" rx="1"
+                    fill="url(#dpCellSheen)" pointerEvents="none"
+                  />
+                </g>
               )))}
               {['06', '09', '12', '15', '18', '21'].map((h, i) => (
-                <text key={h} x={37.25 + i * 45} y="100" fill="#4e7aab" fontSize="6.5" textAnchor="middle">{h}:00</text>
+                <text key={h} x={37 + i * 45} y="100" fill="#4e7aab" fontSize="6.5" textAnchor="middle" shapeRendering="auto">{h}:00</text>
               ))}
               <text x="87"  y="126" fill="#4e7aab" fontSize="8" textAnchor="end">น้อย</text>
               <defs>

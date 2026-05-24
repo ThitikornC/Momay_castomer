@@ -20,6 +20,18 @@
   --sans: 'Sarabun', sans-serif;
 }
 
+/* 8-bit pixel skeleton animations */
+@keyframes pixelScan {
+  from { background-position: 0 -60px; }
+  to   { background-position: 0 200%; }
+}
+@keyframes pixelBlink {
+  0%,  49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.pixel-scan  { animation: pixelScan  1.4s steps(14) infinite; }
+.pixel-blink { animation: pixelBlink 0.8s steps(1)  infinite; }
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
