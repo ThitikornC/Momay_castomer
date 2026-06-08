@@ -631,31 +631,58 @@ function MomayCalendarPopup({ open, onClose, room }) {
   const [selected, setSelected]   = useState(null)
   const [dayDetail, setDayDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const cache = useRef({})
 
   const base = BUU_ROOMS.find(r => r.id === room)?.apiBase ?? MOMAY_API
 
+  function normalizeCalData(data) {
+    if (!Array.isArray(data)) return []
+    const grouped = {}
+    data.forEach(e => {
+      const d = e.start
+      if (!d) return
+      if (!grouped[d]) grouped[d] = { start: d, bill: null, energy: null }
+      const type = e.extendedProps?.type
+      const title = e.title || ''
+      if (type === 'energy') {
+        grouped[d].energy = parseFloat(title) || null
+      } else if (type === 'bill') {
+        grouped[d].bill = parseFloat(title.replace(/[฿,\s]/g, '')) || null
+      }
+    })
+    return Object.values(grouped)
+  }
+
+  async function fetchMonth(y, m) {
+    const key = `${y}-${m}`
+    if (cache.current[key]) return cache.current[key]
+    const mp = String(m).padStart(2, '0')
+    const data = await fetch(`${base}/calendar?year=${y}&month=${mp}`).then(r => r.json()).catch(() => [])
+    const result = normalizeCalData(data)
+    cache.current[key] = result
+    return result
+  }
+
   useEffect(() => {
     if (!open) return
-    setLoading(true)
-    const monthParam = String(month).padStart(2, '0')
-    fetch(`${base}/calendar?year=${year}&month=${monthParam}`)
-      .then(r => r.json())
-      .then(data => {
-        const normalized = (data || []).map(e => {
-          let parsed = {}
-          try { parsed = typeof e.body === 'string' ? JSON.parse(e.body) : (e.body || {}) } catch {}
-          const billRaw   = parsed.electricity_bill ?? parsed.bill   ?? e.electricity_bill ?? e.bill   ?? null
-          const energyRaw = parsed.energy_kwh        ?? parsed.energy ?? e.energy_kwh        ?? e.energy ?? null
-          const bill   = billRaw   !== null ? Number(billRaw)   : null
-          const energy = energyRaw !== null ? Number(energyRaw) : null
-          let startVal = e.start || e.date || e.datetime || e.timestamp || e.day || parsed.date || null
-          if (startVal) { const t = new Date(startVal); if (!isNaN(t)) startVal = t.toISOString() }
-          return { start: startVal, bill, energy }
-        })
-        setEvents(normalized)
-      })
-      .catch(() => setEvents([]))
-      .finally(() => setLoading(false))
+    const key = `${year}-${month}`
+    if (cache.current[key]) {
+      setEvents(cache.current[key])
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
+    fetchMonth(year, month).then(result => {
+      setEvents(result)
+      setLoading(false)
+    })
+    // pre-fetch adjacent months in background
+    const pm = month === 1 ? 12 : month - 1
+    const py = month === 1 ? year - 1 : year
+    const nm = month === 12 ? 1 : month + 1
+    const ny = month === 12 ? year + 1 : year
+    fetchMonth(py, pm).catch(() => {})
+    fetchMonth(ny, nm).catch(() => {})
   }, [open, year, month, base])
 
   if (!open) return null
@@ -705,41 +732,43 @@ function MomayCalendarPopup({ open, onClose, room }) {
           <button onClick={nextMonth} style={navBtn}>&gt;</button>
         </div>
 
-        {loading && <div style={{ color:AMBER,textAlign:'center',padding:16,fontWeight:700 }}>Loading...</div>}
-
-        {!loading && (
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:2 }}>
-            {DAYS_EN.map(d => (
-              <div key={d} style={{ background:AMBER_GLOW, border:'1px solid rgba(255,184,0,0.2)', color:AMBER, fontSize:9, fontWeight:800, textAlign:'center', padding:'4px 0', letterSpacing:0.5 }}>{d}</div>
-            ))}
-            {cells.map((d,i) => {
-              const ev = eventForDay(d)
-              const isToday    = d===today.getDate()&&month===today.getMonth()+1&&year===today.getFullYear()
-              const ds         = d ? `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}` : ''
-              const isSelected = selected === ds
-              const hasBill    = ev && ev.bill !== null
-              const hasEnergy  = ev && ev.energy !== null
-              return (
-                <div key={i} onClick={() => clickDay(d)} style={{
-                  minHeight: 60,
-                  background: isSelected ? 'rgba(255,184,0,0.2)' : isToday ? AMBER_GLOW : DARK_CARD,
-                  border: isSelected ? `2px solid ${AMBER}` : isToday ? '2px solid rgba(255,184,0,0.5)' : '1px solid rgba(255,184,0,0.12)',
-                  cursor: d ? 'pointer' : 'default',
-                  display: 'flex', flexDirection: 'column', padding: '4px 3px',
-                  boxSizing: 'border-box',
-                }}>
-                  {d && (
-                    <>
-                      <span style={{ color: hasBill?AMBER:isToday?AMBER_DIM:'#555', fontSize:13, fontWeight:700, lineHeight:1.2, alignSelf:'flex-end', paddingRight:2 }}>{d}</span>
-                      {hasEnergy && <div style={{ color:'#aaa', fontSize:9, fontWeight:600, lineHeight:1.3, marginTop:'auto' }}>{Number(ev.energy).toFixed(2)} Unit</div>}
-                      {hasBill   && <div style={{ color:AMBER_DIM, fontSize:9, fontWeight:800, lineHeight:1.3 }}>{Number(ev.bill).toFixed(2)} B</div>}
-                    </>
-                  )}
-                </div>
-              )
-            })}
-          </div>
+        {/* Loading indicator — subtle dot, grid always shows */}
+        {loading && (
+          <div style={{ textAlign:'right', fontSize:10, color:'rgba(255,184,0,0.5)', marginBottom:-8, paddingRight:2 }}>กำลังโหลด...</div>
         )}
+
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:2 }}>
+          {DAYS_EN.map(d => (
+            <div key={d} style={{ background:AMBER_GLOW, border:'1px solid rgba(255,184,0,0.2)', color:AMBER, fontSize:9, fontWeight:800, textAlign:'center', padding:'4px 0', letterSpacing:0.5 }}>{d}</div>
+          ))}
+          {cells.map((d,i) => {
+            const ev = eventForDay(d)
+            const isToday    = d===today.getDate()&&month===today.getMonth()+1&&year===today.getFullYear()
+            const ds         = d ? `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}` : ''
+            const isSelected = selected === ds
+            const hasBill    = ev && ev.bill !== null
+            const hasEnergy  = ev && ev.energy !== null
+            return (
+              <div key={i} onClick={() => clickDay(d)} style={{
+                minHeight: 60,
+                background: isSelected ? 'rgba(255,184,0,0.2)' : isToday ? AMBER_GLOW : DARK_CARD,
+                border: isSelected ? `2px solid ${AMBER}` : isToday ? '2px solid rgba(255,184,0,0.5)' : '1px solid rgba(255,184,0,0.12)',
+                cursor: d ? 'pointer' : 'default',
+                display: 'flex', flexDirection: 'column', padding: '4px 3px',
+                boxSizing: 'border-box',
+                opacity: loading && !ev ? 0.5 : 1,
+              }}>
+                {d && (
+                  <>
+                    <span style={{ color: hasBill?AMBER:isToday?AMBER_DIM:'#555', fontSize:13, fontWeight:700, lineHeight:1.2, alignSelf:'flex-end', paddingRight:2 }}>{d}</span>
+                    {hasEnergy && <div style={{ color:'#aaa', fontSize:9, fontWeight:600, lineHeight:1.3, marginTop:'auto' }}>{Number(ev.energy).toFixed(2)} Unit</div>}
+                    {hasBill   && <div style={{ color:AMBER_DIM, fontSize:9, fontWeight:800, lineHeight:1.3 }}>{Number(ev.bill).toFixed(2)} B</div>}
+                  </>
+                )}
+              </div>
+            )
+          })}
+        </div>
 
         {selected && (
           <div style={{ background:DARK_CARD, border:AMBER_BORDER, borderRadius:10, padding:'12px 18px', boxShadow:AMBER_SHADOW, display:'flex', gap:20, justifyContent:'center', alignItems:'center' }}>
@@ -773,15 +802,42 @@ function MomaySolarPopup({ open, onClose, room }) {
   const reportRef  = useRef(null)
   const chartRef   = useRef(null)
   const chartInstRef = useRef(null)
+  const solarCache = useRef({})
 
   const base = BUU_ROOMS.find(r => r.id === room)?.apiBase ?? MOMAY_API
 
+  function addDay(d, n) {
+    const dt = new Date(d + 'T00:00:00'); dt.setDate(dt.getDate() + n)
+    return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`
+  }
+
+  function prefetchSolar(d) {
+    const key = `${room}-${d}`
+    if (solarCache.current[key]) return
+    fetch(`${base}/solar-size?date=${d}`)
+      .then(r => r.json())
+      .then(json => { solarCache.current[key] = json })
+      .catch(() => {})
+  }
+
   useEffect(() => {
     if (!open) return
-    setLoading(true); setData(null)
+    const key = `${room}-${date}`
+    if (solarCache.current[key]) {
+      setData(solarCache.current[key])
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
     fetch(`${base}/solar-size?date=${date}`)
-      .then(r => r.json()).then(json => setData(json))
-      .catch(() => setData(null)).finally(() => setLoading(false))
+      .then(r => r.json())
+      .then(json => { solarCache.current[key] = json; setData(json) })
+      .catch(() => setData(null))
+      .finally(() => {
+        setLoading(false)
+        prefetchSolar(addDay(date, 1))
+        prefetchSolar(addDay(date, -1))
+      })
   }, [open, room, date, base])
 
   useEffect(() => {
@@ -797,11 +853,6 @@ function MomaySolarPopup({ open, onClose, room }) {
   const solarCap    = fmt2(data?.solarCapacity_kW)
   const savingsDay  = fmtL(data?.savingsDay)
   const savingsMonth = fmtL(data?.savingsMonth)
-
-  function addDay(d, n) {
-    const dt = new Date(d + 'T00:00:00'); dt.setDate(dt.getDate() + n)
-    return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`
-  }
 
   const dateStr = (() => {
     const d = new Date(date+'T00:00:00')
@@ -908,7 +959,7 @@ function MomaySolarPopup({ open, onClose, room }) {
   const hourly = s?.hourly || []
 
   const navBtn = { background: DARK_CARD, border: AMBER_BORDER, borderRadius:8, color:AMBER, fontWeight:700, fontSize:18, padding:'4px 12px', cursor:'pointer', boxShadow:AMBER_SHADOW }
-  const pillStyle = { background: DARK_CARD, border: AMBER_BORDER, borderRadius:10, padding:'6px 14px', fontWeight:700, fontSize:16, color:AMBER_DIM, textAlign:'center', width:'100%', boxSizing:'border-box' }
+  const pillStyle = { background: DARK_CARD, border: AMBER_BORDER, borderRadius:10, padding:'6px 14px', fontWeight:700, fontSize:13, color:AMBER_DIM, textAlign:'center', width:'100%', boxSizing:'border-box', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }
   const circleStyle = { width:130, height:130, borderRadius:'50%', background:'radial-gradient(circle at 30% 30%,#f8f6f0,#fffef8 45%,#fff8e8 55%,#f5f0e5 100%)', border: AMBER_BORDER, boxShadow: AMBER_SHADOW, display:'flex', flexDirection:'column', justifyContent:'center', alignItems:'center', color:'#2c1810', fontWeight:'bold', textAlign:'center', cursor:'default' }
 
   return (
@@ -923,27 +974,27 @@ function MomaySolarPopup({ open, onClose, room }) {
             <button onClick={() => setDate(addDay(date,1))} style={navBtn}>&gt;</button>
           </div>
 
-          {loading ? (
-            <div style={{ color:AMBER, fontWeight:700, padding:20 }}>Loading...</div>
-          ) : (
-            <>
-              {/* Two circles */}
-              <div style={{ display:'flex', gap:18, justifyContent:'center', alignItems:'center', width:'100%' }}>
-                <div style={circleStyle}>
-                  <img src="/images/home-icon.png" alt="home" style={{ width:30, height:30, objectFit:'contain', marginBottom:4 }} />
-                  <div style={{ fontSize:13, fontWeight:800 }}>{dayEnergy} Unit</div>
-                </div>
-                <div style={circleStyle}>
-                  <img src="/images/solar-cell-icon.png" alt="solar" style={{ width:36, height:36, objectFit:'contain', marginBottom:4 }} />
-                  <div style={{ fontSize:13, fontWeight:800 }}>{solarCap} kW</div>
-                </div>
-              </div>
-
-              {/* Daily / Monthly savings pills */}
-              <div style={pillStyle}>Daily Savings: {savingsDay} THB</div>
-              <div style={pillStyle}>Monthly Savings: {savingsMonth} THB</div>
-            </>
+          {loading && !data && (
+            <div style={{ color:'rgba(255,184,0,0.4)', fontSize:11, alignSelf:'flex-end', marginBottom:-8 }}>กำลังโหลด...</div>
           )}
+
+          <div style={{ opacity: loading && !data ? 0.4 : 1, display:'flex', flexDirection:'column', alignItems:'center', gap:14, width:'100%' }}>
+            {/* Two circles */}
+            <div style={{ display:'flex', gap:18, justifyContent:'center', alignItems:'center', width:'100%' }}>
+              <div style={circleStyle}>
+                <img src="/images/home-icon.png" alt="home" style={{ width:30, height:30, objectFit:'contain', marginBottom:4 }} />
+                <div style={{ fontSize:13, fontWeight:800 }}>{dayEnergy} Unit</div>
+              </div>
+              <div style={circleStyle}>
+                <img src="/images/solar-cell-icon.png" alt="solar" style={{ width:36, height:36, objectFit:'contain', marginBottom:4 }} />
+                <div style={{ fontSize:13, fontWeight:800 }}>{solarCap} kW</div>
+              </div>
+            </div>
+
+            {/* Daily / Monthly savings pills */}
+            <div style={pillStyle}>Daily Savings: {savingsDay} THB</div>
+            <div style={pillStyle}>Monthly Savings: {savingsMonth} THB</div>
+          </div>
 
           {/* Share / Generate Report icon */}
           <img
