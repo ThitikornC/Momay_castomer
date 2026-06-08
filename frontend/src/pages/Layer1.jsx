@@ -412,7 +412,7 @@ export default function Layer1() {
               </div>
               <div>
                 <h1 className="text-lg sm:text-xl font-extrabold tracking-wider text-white flex flex-wrap items-center gap-2">
-                  <span>LAYER 1: GREEDY</span>
+                  <span>LAYER 1: Real-Time</span>
                   <span className="font-medium text-sm sm:text-base" style={{ color: '#9ca3af' }}>(REAL-TIME DECISION)</span>
                 </h1>
                 <p className="text-xs font-light mt-0.5" style={{ color: '#6fa39b' }}>
