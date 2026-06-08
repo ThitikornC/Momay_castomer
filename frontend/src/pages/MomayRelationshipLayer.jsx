@@ -2397,35 +2397,32 @@ function MomayRelationshipLayerInner() {
               zIndex: 40,
               background: 'linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%)',
               border: '1.5px solid rgba(180,130,60,0.6)',
-              borderRadius: isMobile ? 8 : 12,
-              padding: isMobile ? '5px 7px' : '12px 14px',
-              width: isMobile ? 118 : 210,
+              borderRadius: isMobile ? 10 : 12,
+              padding: isMobile ? '8px 10px' : '12px 14px',
+              width: isMobile ? 160 : 210,
               boxShadow: '0 0 18px rgba(180,130,60,0.2), inset 0 1px 0 rgba(180,130,60,0.12)',
               display: 'flex',
               flexDirection: 'column',
-              gap: isMobile ? 2 : 6,
+              gap: isMobile ? 4 : 6,
             }}
           >
             {/* Avatar + Name row */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 4 : 8, marginBottom: isMobile ? 1 : 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 6 : 8, marginBottom: isMobile ? 2 : 4 }}>
               <div style={{
-                width: isMobile ? 20 : 34, height: isMobile ? 20 : 34, borderRadius: '50%',
+                width: isMobile ? 26 : 34, height: isMobile ? 26 : 34, borderRadius: '50%',
                 background: 'rgba(180,130,60,0.18)',
                 border: '1.5px solid rgba(180,130,60,0.5)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 flexShrink: 0,
               }}>
-                <Users size={isMobile ? 10 : 18} color="#b4823c" strokeWidth={2} />
+                <Users size={isMobile ? 13 : 18} color="#b4823c" strokeWidth={2} />
               </div>
-              <span style={{ color: '#e8c97a', fontWeight: 700, fontSize: isMobile ? 9 : 13, letterSpacing: 0.3, lineHeight: 1.2 }}>
-                {isMobile ? 'ม.บูรพา' : 'สำนักหอสมุด ม.บูรพา'}
+              <span style={{ color: '#e8c97a', fontWeight: 700, fontSize: isMobile ? 11 : 13, letterSpacing: 0.3, lineHeight: 1.2 }}>
+                สำนักหอสมุด ม.บูรพา
               </span>
             </div>
-            {(isMobile
-              ? [['User No.', 'No.014'], ['Date', '15-05-26']]
-              : [['User Number', 'No.014'], ['Contract Number', '-'], ['Date Installed', '15-05-26'], ['Contract Expiry', '-']]
-            ).map(([label, value]) => (
-              <div key={label} style={{ display: 'flex', gap: 3, fontSize: isMobile ? 8 : 10, lineHeight: 1.4 }}>
+            {[['User Number', 'No.014'], ['Contract Number', '-'], ['Date Installed', '15-05-26'], ['Contract Expiry', '-']].map(([label, value]) => (
+              <div key={label} style={{ display: 'flex', gap: 3, fontSize: isMobile ? 10 : 10, lineHeight: 1.4 }}>
                 <span style={{ color: '#8a7060', whiteSpace: 'nowrap' }}>{label} :</span>
                 <span style={{ color: '#c9a96e', fontWeight: 600 }}>{value}</span>
               </div>
