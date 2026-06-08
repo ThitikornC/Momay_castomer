@@ -760,9 +760,15 @@ function MomayCalendarPopup({ open, onClose, room }) {
 
 // ── Solar Popup — original MomayBUUV.pm kwangPopup circles style ────────────
 function MomaySolarPopup({ open, onClose, room }) {
-  const [date, setDate]       = useState(_bkkTodayStr)
-  const [data, setData]       = useState(null)
-  const [loading, setLoading] = useState(false)
+  const [date, setDate]             = useState(_bkkTodayStr)
+  const [data, setData]             = useState(null)
+  const [loading, setLoading]       = useState(false)
+  const [reportOpen, setReportOpen] = useState(false)
+  const [reportData, setReportData] = useState(null)
+  const [generating, setGenerating] = useState(false)
+  const reportRef  = useRef(null)
+  const chartRef   = useRef(null)
+  const chartInstRef = useRef(null)
 
   const base = BUU_ROOMS.find(r => r.id === room)?.apiBase ?? MOMAY_API
 
@@ -774,36 +780,22 @@ function MomaySolarPopup({ open, onClose, room }) {
       .catch(() => setData(null)).finally(() => setLoading(false))
   }, [open, room, date, base])
 
+  useEffect(() => {
+    return () => { if (chartInstRef.current) { chartInstRef.current.destroy(); chartInstRef.current = null } }
+  }, [])
+
   if (!open) return null
 
-  const roomLabel = BUU_ROOMS.find(r => r.id === room)?.label ?? room
-  const fmt2      = v => (v !== null && v !== undefined) ? Number(v).toFixed(2) : '--'
-  const fmtL      = v => (v !== null && v !== undefined) ? Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) : '--'
+  const fmt2 = v => (v !== null && v !== undefined) ? Number(v).toFixed(2) : '--'
+  const fmtL = v => (v !== null && v !== undefined) ? Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) : '--'
 
-  const dayEnergy      = fmt2(data?.dayEnergy)
-  const nightEnergy    = fmt2(data?.nightEnergy)
-  const totalEnergy    = fmt2(data?.totalEnergyKwh)
-  const solarCapacity  = fmt2(data?.solarCapacity_kW)
-  const peakPower      = fmt2(data?.peakPowerDay)
-  const savingsDay     = fmtL(data?.savingsDay)
-  const savingsMonth   = fmtL(data?.savingsMonth)
-  const totalCost      = fmt2(data?.totalCost)
+  const dayEnergy   = fmt2(data?.dayEnergy)
+  const solarCap    = fmt2(data?.solarCapacity_kW)
+  const savingsDay  = fmtL(data?.savingsDay)
+  const savingsMonth = fmtL(data?.savingsMonth)
 
   function addDay(d, n) {
     const dt = new Date(d + 'T00:00:00'); dt.setDate(dt.getDate() + n); return dt.toISOString().split('T')[0]
-  }
-
-  function downloadCSV() {
-    const rows = [
-      ['Solar Report', roomLabel], ['Date', date],
-      ['Day Energy (Unit)', dayEnergy], ['Night Energy (Unit)', nightEnergy],
-      ['Total Energy (Unit)', totalEnergy], ['Solar Capacity (kW)', solarCapacity],
-      ['Peak Power (kW)', peakPower], ['Daily Savings (THB)', savingsDay],
-      ['Monthly Savings (THB)', savingsMonth], ['Total Cost (THB)', totalCost],
-    ]
-    const blob = new Blob(['﻿'+rows.map(r=>r.join(',')).join('\n')],{type:'text/csv;charset=utf-8;'})
-    const a = Object.assign(document.createElement('a'),{href:URL.createObjectURL(blob),download:`solar_${roomLabel}_${date}.csv`})
-    a.click(); URL.revokeObjectURL(a.href)
   }
 
   const dateStr = (() => {
@@ -813,71 +805,253 @@ function MomaySolarPopup({ open, onClose, room }) {
     return `${pad(d.getDate())} - ${mm} - ${d.getFullYear()}`
   })()
 
+  async function openReport() {
+    setReportData(null)
+    setReportOpen(true)
+    try {
+      const [solar, energyJson] = await Promise.all([
+        fetch(`${base}/solar-size?date=${date}`).then(r => r.json()),
+        fetch(`${base}/daily-energy/pm_deer?date=${date}`).then(r => r.json()),
+      ])
+      setReportData({ solar, energyData: energyJson?.data || [] })
+    } catch (err) { console.error('prepareReportData failed:', err) }
+  }
+
+  async function captureReport() {
+    if (!reportRef.current) return null
+    const el = reportRef.current
+
+    if (chartRef.current && reportData?.energyData) {
+      if (chartInstRef.current) { chartInstRef.current.destroy(); chartInstRef.current = null }
+      const { Chart, registerables } = await import('chart.js')
+      Chart.register(...registerables)
+      const energyData = reportData.energyData
+      const chartData = new Array(1440).fill(null)
+      energyData.forEach(item => {
+        const t = new Date(item.timestamp)
+        const idx = t.getUTCHours() * 60 + t.getUTCMinutes()
+        if (idx >= 0 && idx < 1440) chartData[idx] = item.active_power_total ?? item.power ?? item.power_active ?? null
+      })
+      let maxVal = null, maxIdx = null, sum = 0, count = 0
+      chartData.forEach((v, i) => {
+        if (v !== null) { if (maxVal === null || v > maxVal) { maxVal = v; maxIdx = i }; sum += v; count++ }
+      })
+      const avgVal = count > 0 ? sum / count : null
+      const labels = Array.from({length:1440}, (_,i) => `${String(Math.floor(i/60)).padStart(2,'0')}:${String(i%60).padStart(2,'0')}`)
+      const ctx = chartRef.current.getContext('2d')
+      const grad = ctx.createLinearGradient(0,0,0,300)
+      grad.addColorStop(0,'rgba(139,69,19,0.4)'); grad.addColorStop(0.5,'rgba(210,180,140,0.3)'); grad.addColorStop(1,'rgba(245,222,179,0.1)')
+      chartInstRef.current = new Chart(ctx, {
+        type:'line', data:{ labels, datasets:[
+          { label:'Power', data:chartData, borderColor:'#8B4513', backgroundColor:grad, fill:true, borderWidth:0.5, tension:0.3, pointRadius:0.1 },
+          { label:'Max', data:chartData.map((_,i)=>i===maxIdx?maxVal:null), borderColor:'#ff9999', pointRadius:5, pointBackgroundColor:'#ff9999', fill:false, showLine:false },
+          { label:'Average', data:new Array(1440).fill(avgVal), borderColor:'#000', borderDash:[5,5], fill:false, pointRadius:0, borderWidth:1 },
+        ]},
+        options:{ responsive:false, animation:false, plugins:{legend:{display:true},tooltip:{enabled:false}},
+          scales:{
+            x:{type:'category',grid:{display:false},ticks:{autoSkip:false,color:'#000',maxRotation:0,callback:function(v){const l=this.getLabelForValue(v);if(!l)return'';const[h,m]=l.split(':');return m==='00'&&parseInt(h)%3===0?l:''}},title:{display:true,text:'Time (HH:MM)',color:'#000',font:{size:12,weight:'bold'}}},
+            y:{grid:{display:false},beginAtZero:true,ticks:{color:'#000'},title:{display:true,text:'Power (kW)',color:'#000',font:{size:12,weight:'bold'}}},
+          }
+        }
+      })
+    }
+
+    await new Promise(r => setTimeout(r, 500))
+    el.style.position = 'fixed'; el.style.left = '-9999px'; el.style.top = '0'
+    el.style.visibility = 'visible'; el.style.opacity = '1'
+    const { default: html2canvas } = await import('html2canvas')
+    const canvas = await html2canvas(el, { scale:1.5, useCORS:true, logging:false, allowTaint:false })
+    el.style.position = 'absolute'; el.style.left = '-9999px'
+    el.style.visibility = 'hidden'; el.style.opacity = '0'
+    return canvas
+  }
+
+  async function downloadReport() {
+    setGenerating(true); setReportOpen(false)
+    try {
+      const canvas = await captureReport()
+      if (!canvas) return
+      canvas.toBlob(blob => {
+        const link = document.createElement('a')
+        link.href = URL.createObjectURL(blob); link.download = `KwangReport-${date}.png`
+        link.click(); URL.revokeObjectURL(link.href)
+      })
+    } catch (err) { console.error('Download failed:', err) }
+    finally { setGenerating(false) }
+  }
+
+  async function shareReport() {
+    setGenerating(true); setReportOpen(false)
+    try {
+      const canvas = await captureReport()
+      if (!canvas) return
+      canvas.toBlob(async blob => {
+        const file = new File([blob], `KwangReport-${date}.png`, { type:'image/png' })
+        if (navigator.canShare && navigator.canShare({ files:[file] })) {
+          await navigator.share({ files:[file], title:'Kwang Solar Report' })
+        } else {
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a'); a.href = url; a.download = `KwangReport-${date}.png`
+          a.click(); URL.revokeObjectURL(url)
+        }
+      })
+    } catch (err) { console.error('Share failed:', err) }
+    finally { setGenerating(false) }
+  }
+
+  const s = reportData?.solar
+  const hourly = s?.hourly || []
+
   const navBtn = { background:MOMAY_CREAM_BG, border:MOMAY_GOLD_BORDER, borderRadius:10, color:MOMAY_TEXT_COLOR, fontWeight:700, fontSize:18, padding:'4px 12px', cursor:'pointer', boxShadow:MOMAY_SHADOW, textShadow:MOMAY_TEXT_SHADOW }
   const pillStyle = { background:MOMAY_CREAM_BG, border:'6px solid #74640a', borderRadius:10, padding:'6px 14px', fontWeight:700, fontSize:16, color:MOMAY_TEXT_COLOR, textAlign:'center', boxShadow:'inset 0 0 5px rgba(0,0,0,0.15),2px 2px 4px rgba(0,0,0,0.6),-4px 3px #3b3305,0 0 12px rgba(255,230,160,0.55)', textShadow:'0 1px 0 rgba(255,255,255,0.3),1px 2px 4px rgba(0,0,0,0.6)', width:'100%', boxSizing:'border-box' }
   const circleStyle = { width:130, height:130, borderRadius:'50%', background:'radial-gradient(circle at 30% 30%,#f8f6f0,#fffef8 45%,#fff8e8 55%,#f5f0e5 100%)', border:'3px solid #74640a', boxShadow:'inset 0 0 5px rgba(0,0,0,0.15),1px 1px 0 #000,-4px 3px #3b3305,0 0 12px rgba(255,230,160,0.55)', display:'flex', flexDirection:'column', justifyContent:'center', alignItems:'center', color:MOMAY_TEXT_COLOR, fontWeight:'bold', textAlign:'center', textShadow:MOMAY_TEXT_SHADOW, cursor:'default' }
-  const smallPill = { background:MOMAY_CREAM_BG, border:'3px solid #74640a', borderRadius:8, padding:'4px 10px', fontWeight:700, fontSize:12, color:MOMAY_TEXT_COLOR, textAlign:'center', boxShadow:MOMAY_SHADOW, flex:1 }
 
   return (
-    <div style={{ position:'fixed',inset:0,zIndex:99999,background:'rgba(0,0,0,0.55)',display:'flex',alignItems:'center',justifyContent:'center',padding:16 }}>
-      <div style={{ position:'relative', background:MOMAY_CREAM_BG, border:'6px solid #74640a', borderRadius:12, width:'100%', maxWidth:320, padding:'20px 22px', display:'flex', flexDirection:'column', alignItems:'center', gap:14, boxShadow:MOMAY_SHADOW_BIG, fontFamily:'"Roboto",sans-serif', overflow:'visible' }}>
+    <>
+      <div style={{ position:'fixed',inset:0,zIndex:99999,background:'rgba(0,0,0,0.55)',display:'flex',alignItems:'center',justifyContent:'center',padding:16 }}>
+        <div style={{ position:'relative', background:MOMAY_CREAM_BG, border:'6px solid #74640a', borderRadius:12, width:'100%', maxWidth:320, padding:'20px 22px', display:'flex', flexDirection:'column', alignItems:'center', gap:14, boxShadow:MOMAY_SHADOW_BIG, fontFamily:'"Roboto",sans-serif', overflow:'visible' }}>
 
-        {/* KWANG logo badge (top-right) */}
-        <div style={{ position:'absolute', top:-6, right:-6, zIndex:1 }}>
-          <img src="/images/Kwang_icon.png" alt="Kwang" style={{ width:52, height:52, objectFit:'contain', filter:'drop-shadow(0 2px 4px rgba(0,0,0,0.4))' }} />
-        </div>
+          {/* KWANG logo badge (top-right) */}
+          <div style={{ position:'absolute', top:-6, right:-6, zIndex:1 }}>
+            <img src="/images/Kwang_icon.png" alt="Kwang" style={{ width:52, height:52, objectFit:'contain', filter:'drop-shadow(0 2px 4px rgba(0,0,0,0.4))' }} />
+          </div>
 
-        {/* Date nav */}
-        <div style={{ display:'flex', alignItems:'center', gap:6, width:'100%', justifyContent:'center' }}>
-          <button onClick={() => setDate(d => addDay(d,-1))} style={navBtn}>&lt;</button>
-          <span
-            onClick={() => {
-              const inp = Object.assign(document.createElement('input'),{type:'date',value:date})
-              Object.assign(inp.style,{position:'absolute',opacity:'0'})
-              document.body.appendChild(inp); inp.focus(); inp.click()
-              inp.onchange = () => { setDate(inp.value); document.body.removeChild(inp) }
-            }}
-            style={{ background:MOMAY_CREAM_BG, border:MOMAY_GOLD_BORDER, borderRadius:10, padding:'4px 8px', fontWeight:700, fontSize:13, color:MOMAY_TEXT_COLOR, textAlign:'center', boxShadow:MOMAY_SHADOW, textShadow:MOMAY_TEXT_SHADOW, cursor:'pointer', flex:1 }}
-          >{dateStr}</span>
-          <button onClick={() => setDate(d => addDay(d,1))} style={navBtn}>&gt;</button>
-        </div>
+          {/* Date nav */}
+          <div style={{ display:'flex', alignItems:'center', gap:6, width:'100%', justifyContent:'center' }}>
+            <button onClick={() => setDate(d => addDay(d,-1))} style={navBtn}>&lt;</button>
+            <span
+              onClick={() => {
+                const inp = Object.assign(document.createElement('input'),{type:'date',value:date})
+                Object.assign(inp.style,{position:'absolute',opacity:'0'})
+                document.body.appendChild(inp); inp.focus(); inp.click()
+                inp.onchange = () => { setDate(inp.value); document.body.removeChild(inp) }
+              }}
+              style={{ background:MOMAY_CREAM_BG, border:MOMAY_GOLD_BORDER, borderRadius:10, padding:'4px 8px', fontWeight:700, fontSize:13, color:MOMAY_TEXT_COLOR, textAlign:'center', boxShadow:MOMAY_SHADOW, textShadow:MOMAY_TEXT_SHADOW, cursor:'pointer', flex:1 }}
+            >{dateStr}</span>
+            <button onClick={() => setDate(d => addDay(d,1))} style={navBtn}>&gt;</button>
+          </div>
 
-        {loading ? (
-          <div style={{ color:'#74640a', fontWeight:700, padding:20 }}>Loading...</div>
-        ) : (
-          <>
-            {/* Two circles */}
-            <div style={{ display:'flex', gap:18, justifyContent:'center', alignItems:'center', width:'100%' }}>
-              <div style={circleStyle}>
-                <span style={{ fontSize:26, lineHeight:1 }}>🏠</span>
-                <div style={{ fontSize:13, fontWeight:800, marginTop:4 }}>{dayEnergy} Unit</div>
+          {loading ? (
+            <div style={{ color:'#74640a', fontWeight:700, padding:20 }}>Loading...</div>
+          ) : (
+            <>
+              {/* Two circles */}
+              <div style={{ display:'flex', gap:18, justifyContent:'center', alignItems:'center', width:'100%' }}>
+                <div style={circleStyle}>
+                  <img src="/images/home-icon.png" alt="home" style={{ width:30, height:30, objectFit:'contain', marginBottom:4 }} />
+                  <div style={{ fontSize:13, fontWeight:800 }}>{dayEnergy} Unit</div>
+                </div>
+                <div style={circleStyle}>
+                  <img src="/images/solar-cell-icon.png" alt="solar" style={{ width:36, height:36, objectFit:'contain', marginBottom:4 }} />
+                  <div style={{ fontSize:13, fontWeight:800 }}>{solarCap} kW</div>
+                </div>
               </div>
-              <div style={circleStyle}>
-                <img src="/images/solar-cell-icon.png" alt="solar" style={{ width:36, height:36, objectFit:'contain', marginBottom:4 }} />
-                <div style={{ fontSize:13, fontWeight:800 }}>{solarCapacity} kW</div>
-              </div>
-            </div>
 
-            {/* Daily / Monthly savings pills */}
-            <div style={pillStyle}>Daily Savings: {savingsDay} THB</div>
-            <div style={pillStyle}>Monthly Savings: {savingsMonth} THB</div>
+              {/* Daily / Monthly savings pills */}
+              <div style={pillStyle}>Daily Savings: {savingsDay} THB</div>
+              <div style={pillStyle}>Monthly Savings: {savingsMonth} THB</div>
+            </>
+          )}
 
-            {/* Extra stats row */}
-            <div style={{ display:'flex', gap:8, width:'100%' }}>
-              <div style={smallPill}><div style={{fontSize:9,color:'#74640a'}}>Night Energy</div><div>{nightEnergy} Unit</div></div>
-              <div style={smallPill}><div style={{fontSize:9,color:'#74640a'}}>Peak Power</div><div>{peakPower} kW</div></div>
-              <div style={smallPill}><div style={{fontSize:9,color:'#74640a'}}>Total Cost</div><div>{totalCost} THB</div></div>
-            </div>
-          </>
-        )}
+          {/* Kwang banner */}
+          <img src="/images/Kwang_baner.png" alt="Kwang" width="64" height="113" style={{ objectFit:'contain' }} />
 
-        {/* Share/CSV button */}
-        <button onClick={downloadCSV} title="ออก Report (CSV)" style={{ background:'none', border:'none', cursor:'pointer', display:'flex', flexDirection:'column', alignItems:'center', gap:3 }}>
-          <span style={{ fontSize:24 }}>⬇</span>
-          <span style={{ fontSize:10, color:'#74640a', fontWeight:700 }}>Download CSV</span>
-        </button>
+          {/* Share / Generate Report icon */}
+          <img
+            src="/images/share.png"
+            alt="Generate Report"
+            onClick={openReport}
+            style={{ width:30, height:30, cursor:'pointer', paddingTop:4 }}
+          />
+        </div>
       </div>
-    </div>
+
+      {/* Report Action Modal */}
+      {reportOpen && (
+        <div
+          style={{ position:'fixed',inset:0,zIndex:999999,background:'rgba(0,0,0,0.6)',display:'flex',alignItems:'center',justifyContent:'center',padding:16 }}
+          onClick={e => { if (e.target === e.currentTarget) setReportOpen(false) }}
+        >
+          <div style={{ background:MOMAY_CREAM_BG, border:'6px solid #74640a', borderRadius:12, width:'100%', maxWidth:280, padding:'20px 22px', boxShadow:MOMAY_SHADOW_BIG, fontFamily:'"Roboto",sans-serif', display:'flex', flexDirection:'column', gap:12 }}>
+            <div style={{ textAlign:'center', fontWeight:700, fontSize:16, color:MOMAY_TEXT_COLOR }}>Export Report</div>
+            <div style={{ fontSize:12, color:'#74640a', textAlign:'center' }}>
+              {reportData ? 'Choose how you want to export your report' : 'Preparing report data…'}
+            </div>
+            <div style={{ display:'flex', gap:10 }}>
+              <button
+                onClick={downloadReport}
+                disabled={!reportData || generating}
+                style={{ flex:1, background:MOMAY_CREAM_BG, border:'3px solid #74640a', borderRadius:8, padding:'10px 6px', cursor:'pointer', display:'flex', flexDirection:'column', alignItems:'center', gap:4, color:MOMAY_TEXT_COLOR, fontWeight:700, fontSize:12, boxShadow:MOMAY_SHADOW, opacity:(!reportData||generating)?0.5:1 }}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                <span>{generating ? 'Generating…' : 'Download'}</span>
+                <span style={{ fontSize:10, fontWeight:400 }}>Save to device</span>
+              </button>
+              <button
+                onClick={shareReport}
+                disabled={!reportData || generating}
+                style={{ flex:1, background:MOMAY_CREAM_BG, border:'3px solid #74640a', borderRadius:8, padding:'10px 6px', cursor:'pointer', display:'flex', flexDirection:'column', alignItems:'center', gap:4, color:MOMAY_TEXT_COLOR, fontWeight:700, fontSize:12, boxShadow:MOMAY_SHADOW, opacity:(!reportData||generating)?0.5:1 }}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                </svg>
+                <span>Share</span>
+                <span style={{ fontSize:10, fontWeight:400 }}>Send to others</span>
+              </button>
+            </div>
+            <button onClick={() => setReportOpen(false)} style={{ background:'none', border:'2px solid #74640a', borderRadius:8, padding:'6px 0', cursor:'pointer', color:MOMAY_TEXT_COLOR, fontWeight:700, fontSize:13 }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Hidden report wrapper for html2canvas capture */}
+      <div
+        ref={reportRef}
+        style={{ position:'absolute', left:'-9999px', top:0, visibility:'hidden', opacity:0, width:600, background:'#fffef5', padding:'16px 20px', fontFamily:'sans-serif', color:'#2c1810', fontSize:13, lineHeight:1.5 }}
+      >
+        <img src="/images/kwang_logo_report.png" alt="Kwang Report" crossOrigin="anonymous" style={{ width:'100%', maxWidth:213, height:'auto', display:'block', marginLeft:-20 }} />
+        <p>Client Name: <span>Naresuan University Library</span></p>
+        <p>Date: <span>{dateStr}</span></p>
+        <p>Electricity usage (within 1 day): <strong>{fmt2(s?.totalEnergyKwh ?? data?.totalEnergyKwh)} Unit</strong></p>
+        <p style={{ paddingBottom:10 }}>Electricity Bill (within 1 day): <strong>{fmt2(s?.totalCost ?? data?.totalCost)} THB</strong></p>
+        <div style={{ display:'flex', gap:10 }}>
+          <div style={{ flex:1 }}>
+            <p>Electricity usage (06:00AM–18:00PM): <strong>{fmt2(s?.dayEnergy ?? data?.dayEnergy)} Unit</strong></p>
+            <p>Recommended Solar Cell Installation: <strong>{fmt2(s?.solarCapacity_kW ?? data?.solarCapacity_kW)} kW</strong></p>
+            <p>Daily savings: <strong>{fmt2(s?.savingsDay ?? data?.savingsDay)} THB</strong></p>
+            <p>Monthly savings: <strong>{fmtL(s?.savingsMonth ?? data?.savingsMonth)} THB</strong></p>
+          </div>
+          <div style={{ flex:1 }}>
+            <p>Electricity usage (18:00PM–6:00AM): <strong>{fmt2(s?.nightEnergy ?? data?.nightEnergy)} Unit</strong></p>
+          </div>
+        </div>
+        <div style={{ marginTop:20 }}>
+          <canvas ref={chartRef} width="600" height="300" style={{ display:'block' }} />
+        </div>
+        <table style={{ width:'100%', borderCollapse:'collapse', marginTop:10, fontSize:12 }}>
+          <thead>
+            <tr style={{ background:'#74640a', color:'#fff' }}>
+              <th style={{ padding:'4px 8px', textAlign:'center' }}>Hour</th>
+              <th style={{ padding:'4px 8px', textAlign:'center' }}>Energy (Unit)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {hourly.length > 0
+              ? hourly.map((h, i) => (
+                  <tr key={i} style={{ background: i%2===0 ? '#fffef8' : '#f5f0e5' }}>
+                    <td style={{ padding:'3px 8px', textAlign:'center' }}>{h.hour}</td>
+                    <td style={{ padding:'3px 8px', textAlign:'center' }}>{h.energy_kwh}</td>
+                  </tr>
+                ))
+              : <tr><td colSpan={2} style={{ textAlign:'center', padding:8 }}>No data</td></tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </>
   )
 }
 

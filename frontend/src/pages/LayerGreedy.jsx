@@ -126,7 +126,7 @@ export default function LayerGreedy() {
           </div>
           <div className="min-w-0">
             <h1 className="text-base font-extrabold tracking-wider text-white flex flex-wrap items-baseline gap-1.5">
-              <span className="whitespace-nowrap">LAYER 1: GREEDY</span>
+              <span className="whitespace-nowrap">LAYER 1: Real-Time</span>
               <span className="text-gray-400 font-medium text-xs whitespace-nowrap">(REAL-TIME DECISION)</span>
             </h1>
             <p className="text-[10px] text-[#6fa39b] font-light mt-0.5">

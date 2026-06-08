@@ -98,7 +98,7 @@ export default function LayerDP() {
           </div>
           <div className="min-w-0">
             <h1 className="text-base font-extrabold tracking-wider text-white flex flex-wrap items-baseline gap-1.5">
-              <span className="whitespace-nowrap">LAYER 2: <span className="text-[#3b82f6]">DYNAMIC PROGRAMMING</span></span>
+              <span className="whitespace-nowrap">LAYER 2: <span className="text-[#3b82f6]">Enlightenment</span></span>
               <span className="text-gray-400 font-medium text-xs whitespace-nowrap">(BEHAVIORAL LEARNING)</span>
             </h1>
             <p className="text-[10px] text-[#4e7aab] font-light mt-0.5">
