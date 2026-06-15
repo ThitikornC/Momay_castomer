@@ -1,0 +1,22 @@
+{
+  "name": "momay-gateway",
+  "version": "1.0.0",
+  "description": "Unified IoT gateway: ESP32 Modbus / Tasmota MQTT / Tuya IR",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "cors": "^2.8.5",
+    "crypto-js": "^4.2.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mongoose": "^8.5.1",
+    "mqtt": "^5.8.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}

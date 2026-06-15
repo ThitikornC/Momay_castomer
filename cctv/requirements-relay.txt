@@ -1,0 +1,4 @@
+# Relay (รันที่เครื่อง local ต่อกล้อง) — ต้องมี opencv
+opencv-python==4.10.0.84
+websockets==12.0
+python-dotenv==1.0.1

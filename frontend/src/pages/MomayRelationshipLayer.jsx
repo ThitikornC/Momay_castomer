@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, Component } from 'react'
 import { Layers, Users, Zap, Calendar, Bell, TrendingUp, TrendingDown, Coins, Home, BookOpen, Lightbulb, Wind, Camera, Cpu, ChevronDown } from 'lucide-react'
 import { Chart, registerables } from 'chart.js'
+import QRCode from 'qrcode'
 import LayerGreedy from './LayerGreedy.jsx'
 import LayerDP from './LayerDP.jsx'
 
@@ -362,7 +363,14 @@ function PixelSkeleton({ show }) {
   )
 }
 
-const BUU_ROOMS = [
+// TODO: ใส่ URL + device ของ "มิเตอร์รวมทั้งอาคาร" จริง (ตอนนี้เป็น placeholder)
+const BUILDING_API = 'https://your-building-meter.up.railway.app'
+
+// ค่า default (fallback) ใช้เมื่อโหลด config จาก gateway ไม่ได้ — ปกติจะถูกแทนด้วยข้อมูลจาก /api/config
+let BUU_ROOMS = [
+  { id: 'ทั้งอาคาร', label: 'ทั้งอาคาร', shortLabel: 'รวม',
+    img: '/Floorplan/Floor4plan.png', heatmap: '/Floorplan/HeatmapgridFloor4.svg',
+    apiBase: BUILDING_API, device: 'pm_building' },
   { id: 'ห้อง101โถงชั้น1', label: 'ห้อง 101', shortLabel: '101',
     img: '/Floorplan/Floor1plan.png', heatmap: '/Floorplan/HeatmapgridFloor1.svg',
     apiBase: 'https://momatdeerbn-production.up.railway.app', device: 'pm_deer' },
@@ -373,9 +381,31 @@ const BUU_ROOMS = [
     img: '/Floorplan/Floor3plan.png', heatmap: '/Floorplan/HeatmapgridFloor3.svg',
     apiBase: 'https://momaysandbn-production.up.railway.app', device: 'pm_sand' },
 ]
-const FLOORS = BUU_ROOMS
+let FLOORS = BUU_ROOMS
+
+// gateway (device/config) API — โหลดห้อง/อุปกรณ์จากที่นี่
+const DEVICES_API = (import.meta.env.VITE_DEVICES_API || 'http://localhost:8002').replace(/\/$/, '')
+
+// map rooms จาก /api/config → รูปแบบที่ dashboard ใช้ (id/apiBase/device จาก meter device)
+function mapConfigRooms(apiRooms) {
+  return apiRooms.map(r => {
+    const meter = (r.devices || []).find(d => d.category === 'meter')
+    return {
+      id: r.roomId,
+      label: r.label || r.roomId,
+      shortLabel: r.shortLabel || r.roomId,
+      img: r.img,
+      heatmap: r.heatmap,
+      kind: r.kind,
+      apiBase: (meter?.meta?.apiBase || BUILDING_API).replace(/\/+$/, ''),  // ตัด / ท้าย กัน double slash
+      device: (meter?.meta?.source || 'pm_building').trim(),
+      devices: r.devices || [],
+    }
+  })
+}
 
 const FLOOR_TRACK_PRESET = {
+  'ทั้งอาคาร':        { people: 188 },   // รวม 3 ห้อง (55+63+70)
   'ห้อง101โถงชั้น1': { people: 55 },
   'ห้อง200':          { people: 63 },
   'ห้อง300':          { people: 70 },
@@ -497,14 +527,15 @@ function _addDaysStr(d, n) {
 const _dailyCache = {}
 
 // Exact port of script.js fetchDailyData — UTC window fetch + localStorage TTL cache
-async function _fetchEnergyForDate(date) {
+async function _fetchEnergyForDate(date, apiBase = MOMAY_API, device = 'pm_deer') {
   // accept both Date object and YYYY-MM-DD string
   const dateObj = (date instanceof Date) ? date : new Date(date + 'T00:00:00')
   const localKey = _localDateStr(dateObj)
-  const storageKey = `momayDailyData-${localKey}`
+  const cacheKey = `${device}@${localKey}`              // แยก cache ตาม device (กันข้อมูลข้ามห้อง)
+  const storageKey = `momayDailyData-${device}-${localKey}`
   const STORAGE_TTL = 1000 * 60 * 15 // 15 min
 
-  if (_dailyCache[localKey]) return _dailyCache[localKey]
+  if (_dailyCache[cacheKey]) return _dailyCache[cacheKey]
 
   // localStorage fast-path (same as script.js)
   try {
@@ -512,24 +543,24 @@ async function _fetchEnergyForDate(date) {
     if (raw) {
       const parsed = JSON.parse(raw)
       if (parsed && parsed.ts && (Date.now() - parsed.ts < STORAGE_TTL)) {
-        _dailyCache[localKey] = parsed.data || []
+        _dailyCache[cacheKey] = parsed.data || []
         // background refresh
         ;(async () => {
           try {
-            const fresh = await _fetchFromNetwork(dateObj)
-            _dailyCache[localKey] = fresh
+            const fresh = await _fetchFromNetwork(dateObj, apiBase, device)
+            _dailyCache[cacheKey] = fresh
             localStorage.setItem(storageKey, JSON.stringify({ ts: Date.now(), data: fresh }))
           } catch { /* ignore */ }
         })()
-        return _dailyCache[localKey]
+        return _dailyCache[cacheKey]
       }
     }
   } catch { /* ignore storage errors */ }
 
   // network fetch
   try {
-    const data = await _fetchFromNetwork(dateObj)
-    _dailyCache[localKey] = data
+    const data = await _fetchFromNetwork(dateObj, apiBase, device)
+    _dailyCache[cacheKey] = data
     try { localStorage.setItem(storageKey, JSON.stringify({ ts: Date.now(), data })) } catch { /* ignore */ }
     return data
   } catch {
@@ -538,7 +569,7 @@ async function _fetchEnergyForDate(date) {
 }
 
 // Fetch the UTC date window covering this local date (exact script.js logic)
-async function _fetchFromNetwork(dateObj) {
+async function _fetchFromNetwork(dateObj, apiBase = MOMAY_API, device = 'pm_deer') {
   const localMidnight = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate())
   const utcStart = new Date(localMidnight.getTime() - (localMidnight.getTimezoneOffset() * 60000))
   const utcEnd   = new Date(utcStart.getTime() + 24 * 3600 * 1000 - 1)
@@ -549,7 +580,7 @@ async function _fetchFromNetwork(dateObj) {
   let combined = []
   for (const ds of fetchDates) {
     try {
-      const r = await fetch(`${MOMAY_API}/daily-energy/pm_deer?date=${ds}`)
+      const r = await fetch(`${apiBase}/daily-energy/${device}?date=${ds}`)
       const j = await r.json()
       combined = combined.concat(j.data ?? [])
     } catch { /* ignore per-day failure */ }
@@ -805,6 +836,7 @@ function MomaySolarPopup({ open, onClose, room }) {
   const solarCache = useRef({})
 
   const base = BUU_ROOMS.find(r => r.id === room)?.apiBase ?? MOMAY_API
+  const device = BUU_ROOMS.find(r => r.id === room)?.device ?? 'pm_deer'
 
   function addDay(d, n) {
     const dt = new Date(d + 'T00:00:00'); dt.setDate(dt.getDate() + n)
@@ -867,7 +899,7 @@ function MomaySolarPopup({ open, onClose, room }) {
     try {
       const [solar, energyJson] = await Promise.all([
         fetch(`${base}/solar-size?date=${date}`).then(r => r.json()),
-        fetch(`${base}/daily-energy/pm_deer?date=${date}`).then(r => r.json()),
+        fetch(`${base}/daily-energy/${device}?date=${date}`).then(r => r.json()),
       ])
       setReportData({ solar, energyData: energyJson?.data || [] })
     } catch (err) { console.error('prepareReportData failed:', err) }
@@ -1227,13 +1259,41 @@ function MomayBookingPopup({ open, onClose, room }) {
   const [error, setError]     = useState('')
   const [busy, setBusy]       = useState(false)
   const [bookings, setBookings] = useState([])
+  const [created, setCreated]   = useState(null)   // booking ที่เพิ่งจอง → โชว์ QR
+  const [qrUrl, setQrUrl]       = useState('')     // data URL ของ QR
+
+  const checkinUrl = created ? `${window.location.origin}/checkin?id=${created._id}` : ''
 
   useEffect(() => {
     if (!open) return
-    setError(''); setBusy(false)
-    fetch(`${MOMAY_SERVER}/api/bookings?date=${date}&room=${encodeURIComponent(room)}`)
+    setError(''); setBusy(false); setCreated(null); setQrUrl('')
+    fetch(`${DEVICES_API}/api/bookings?date=${date}&room=${encodeURIComponent(room)}`)
       .then(r => r.json()).then(j => setBookings(j.success ? j.data : [])).catch(() => setBookings([]))
   }, [open, date, room])
+
+  // สร้าง QR (ลิงก์เช็คอิน) เมื่อจองสำเร็จ + auto-save ลงเครื่อง
+  function _qrFileName() {
+    return `QR_${created?.room || 'room'}_${date}_${created?.startTime || ''}-${created?.endTime || ''}.png`.replace(/[^\w.\-]+/g, '_')
+  }
+  function downloadQR() {
+    if (!qrUrl) return
+    const a = document.createElement('a')
+    a.href = qrUrl; a.download = _qrFileName()
+    document.body.appendChild(a); a.click(); a.remove()
+  }
+  useEffect(() => {
+    if (!checkinUrl) { setQrUrl(''); return }
+    QRCode.toDataURL(checkinUrl, { width: 512, margin: 2 }).then(url => {
+      setQrUrl(url)
+      // auto-save ลงเครื่องทันทีที่จองสำเร็จ
+      try {
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `QR_${created?.room || 'room'}_${date}_${created?.startTime || ''}-${created?.endTime || ''}.png`.replace(/[^\w.\-]+/g, '_')
+        document.body.appendChild(a); a.click(); a.remove()
+      } catch { /* ignore */ }
+    }).catch(() => setQrUrl(''))
+  }, [checkinUrl])
 
   if (!open) return null
 
@@ -1246,7 +1306,7 @@ function MomayBookingPopup({ open, onClose, room }) {
     if (startTime >= endTime) { setError('เวลาเริ่มต้องน้อยกว่าเวลาสิ้นสุด'); return }
     setBusy(true); setError('')
     try {
-      const res = await fetch(`${MOMAY_SERVER}/api/bookings`, {
+      const res = await fetch(`${DEVICES_API}/api/bookings`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ room, date, startTime, endTime, bookerName: name.trim(), purpose: purpose.trim() }),
       })
@@ -1254,7 +1314,7 @@ function MomayBookingPopup({ open, onClose, room }) {
       if (!json.success) throw new Error(json.error || 'เกิดข้อผิดพลาด')
       setBookings(prev => [...prev, json.data])
       setName(''); setPurpose(''); setError('')
-      onClose()
+      setCreated(json.data)   // → โชว์ QR เช็คอิน (ไม่ปิด popup ทันที)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -1281,6 +1341,7 @@ function MomayBookingPopup({ open, onClose, room }) {
           <button onClick={() => setDate(d => _addDay(d, 1))} style={{ ...btn('#FFB800'), padding: '4px 10px' }}>&gt;</button>
         </div>
 
+        {!created && <>
         {/* Schedule grid */}
         <div style={{ border: '1px solid rgba(255,184,0,0.2)', borderRadius: 8, overflow: 'hidden' }}>
           <div style={{ display: 'flex', background: 'rgba(255,184,0,0.1)', padding: '6px 12px', borderBottom: '1px solid rgba(255,184,0,0.2)' }}>
@@ -1323,22 +1384,45 @@ function MomayBookingPopup({ open, onClose, room }) {
             <input value={purpose} onChange={e => setPurpose(e.target.value)} placeholder="กรอกวัตถุประสงค์" style={inp} />
           </div>
         </div>
+        </>}
 
         {error && <div style={{ color: '#f87171', fontSize: 12 }}>{error}</div>}
 
+        {/* QR เช็คอิน หลังจองสำเร็จ */}
+        {created && (
+          <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center' }}>
+            <div style={{ color: '#22c55e', fontWeight: 700, fontSize: 14 }}>✅ จองสำเร็จ — สแกน QR เพื่อเช็คอิน</div>
+            <div style={{ color: '#8a7060', fontSize: 11 }}>{created.bookerName} · {created.startTime}–{created.endTime}</div>
+            {qrUrl
+              ? <img src={qrUrl} alt="check-in QR" width={200} height={200} style={{ background: '#fff', padding: 8, borderRadius: 10 }} />
+              : <div style={{ color: '#888', fontSize: 12 }}>กำลังสร้าง QR…</div>}
+            <div style={{ color: '#60a5fa', fontSize: 10, wordBreak: 'break-all' }}>{checkinUrl}</div>
+            <div style={{ color: '#666', fontSize: 11 }}>สแกนด้วยมือถือเพื่อเช็คอิน → ไฟเปิดอัตโนมัติในช่วงเวลาจอง</div>
+          </div>
+        )}
+
         {/* Actions */}
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button onClick={onClose} style={btn('#888')}>ยกเลิก</button>
-          <button onClick={handleConfirm} disabled={busy} style={{ ...btn('#FFB800'), opacity: busy ? 0.6 : 1 }}>
-            {busy ? 'กำลังจอง...' : 'ยืนยันการจอง'}
-          </button>
+          {created ? (
+            <>
+              <button onClick={() => { navigator.clipboard?.writeText(checkinUrl) }} style={btn('#888')}>คัดลอกลิงก์</button>
+              <button onClick={onClose} style={btn('#FFB800')}>เสร็จสิ้น</button>
+            </>
+          ) : (
+            <>
+              <button onClick={onClose} style={btn('#888')}>ยกเลิก</button>
+              <button onClick={handleConfirm} disabled={busy} style={{ ...btn('#FFB800'), opacity: busy ? 0.6 : 1 }}>
+                {busy ? 'กำลังจอง...' : 'ยืนยันการจอง'}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
   )
 }
 
-function MomayPowerChart({ onBookingClick, roomLabel = 'BUU Library' }) {
+function MomayPowerChart({ onBookingClick, roomLabel = 'BUU Library', apiBase = MOMAY_API, device = 'pm_deer' }) {
   const chartRef   = useRef(null)
   const chartInst  = useRef(null)
   const [curDate, setCurDate]       = useState(() => new Date())
@@ -1350,7 +1434,7 @@ function MomayPowerChart({ onBookingClick, roomLabel = 'BUU Library' }) {
     async function load() {
       setLoading(true)
       try {
-        const rows = await _fetchEnergyForDate(curDate)
+        const rows = await _fetchEnergyForDate(curDate, apiBase, device)
         if (cancelled || !chartRef.current) return
 
         // 1440-pt arrays — exact script.js logic
@@ -1454,7 +1538,7 @@ function MomayPowerChart({ onBookingClick, roomLabel = 'BUU Library' }) {
     }
     load()
     return () => { cancelled = true }
-  }, [curDate])
+  }, [curDate, apiBase, device])
 
   // Toggle without re-fetch
   useEffect(() => {
@@ -1542,6 +1626,7 @@ function MomayPowerChart({ onBookingClick, roomLabel = 'BUU Library' }) {
 const MOMAY_SERVER  = 'https://momaybuu-production.up.railway.app'
 const CONTROL_API   = 'https://controlbuu-production.up.railway.app'  // fallback for /room-state, /health
 const PRIMARY_ROOM  = 'ห้อง101โถงชั้น1'
+const CAM_BASE      = (import.meta.env.VITE_GATEWAY_URL || '').replace(/\/$/, '')  // person-counter gateway (MJPEG)
 
 async function _fetchWithTimeout(url, ms = 5000) {
   const ctrl = new AbortController()
@@ -1562,8 +1647,16 @@ function _pm25Level(v) {
   return               { label: 'อันตราย',          color: '#cc0000', bg: 'linear-gradient(135deg,#fffef8,#f5f0e5)' }
 }
 
-function MomayStatusRow() {
+function MomayStatusRow({ room, devices = [] }) {
+  const ROOM = room || PRIMARY_ROOM
+  // device จาก registry (settings) ของห้องนี้ — ถ้ามีจะใช้ผ่าน gateway, ไม่มีก็ fallback ทางเดิม (momaybuu)
+  const switchDev  = devices.find(d => d.category === 'switch')   // ตัวแรก (ใช้ใน AC popup/legacy)
+  const switchDevs = devices.filter(d => d.category === 'switch') // ทั้งหมด (แสดงปุ่มแยกทุกตัว/โซน)
+  const irDev     = devices.find(d => d.category === 'ir-remote')
+  const camDev    = devices.find(d => d.category === 'camera')
   const [bulb, setBulb]   = useState(null)
+  const [switchStates, setSwitchStates] = useState({})           // deviceId → true|false|null(offline)
+  const [switchPending, setSwitchPending] = useState({})         // deviceId → true (รอ MQTT ยืนยัน)
   const [ac, setAc]       = useState(null)
   const [cctvOk, setCctv] = useState(null)
   const [apiOk, setApi]   = useState(null)
@@ -1589,26 +1682,7 @@ function MomayStatusRow() {
   useEffect(() => {
     let alive = true
     async function fetchStates() {
-      // room-state → try momaybuu server first (has /api/room-state proxy), fallback to control direct
-      try {
-        const r = await _fetchWithTimeout(`${MOMAY_SERVER}/api/room-state`)
-        if (!r.ok) throw new Error('not ok')
-        const j = await r.json()
-        if (alive && j?.roomState) {
-          const st = j.roomState[PRIMARY_ROOM]
-          if (typeof st === 'string') setBulb(st.toUpperCase() === 'ON')
-        }
-      } catch {
-        try {
-          const r = await _fetchWithTimeout(`${CONTROL_API}/room-state`)
-          if (!r.ok) throw new Error('not ok')
-          const j = await r.json()
-          if (alive && j?.roomState) {
-            const st = j.roomState[PRIMARY_ROOM]
-            if (typeof st === 'string') setBulb(st.toUpperCase() === 'ON')
-          }
-        } catch { if (alive) setBulb(null) }
-      }
+      // หมายเหตุ: สถานะสวิตช์มาจาก gateway/registry (switchStates) เท่านั้น — เลิกใช้ room-state ของ momaybuu (เคยโชว์ ON ปลอม)
 
       // health → MQTT status (control server has CORS *)
       try {
@@ -1635,7 +1709,36 @@ function MomayStatusRow() {
     fetchStates()
     const id = setInterval(fetchStates, 8000)
     return () => { alive = false; clearInterval(id) }
-  }, [])
+  }, [ROOM])
+
+  // สถานะสวิตช์ทุกตัวจาก gateway (source of truth): meta.relay + offline
+  const switchIds = switchDevs.map(d => d.deviceId).join(',')
+  useEffect(() => {
+    if (!switchDevs.length) return
+    let alive = true
+    async function poll() {
+      const entries = await Promise.all(switchDevs.map(async dev => {
+        try {
+          const r = await _fetchWithTimeout(`${DEVICES_API}/api/devices/${encodeURIComponent(dev.deviceId)}`, 4000)
+          const j = await r.json()
+          if (!j?.ok || !j.device) return [dev.deviceId, undefined]
+          const d = j.device
+          if (d.status === 'offline') return [dev.deviceId, null]            // ออฟไลน์ → …
+          if (typeof d?.meta?.relay === 'boolean') return [dev.deviceId, d.meta.relay]
+          return [dev.deviceId, undefined]
+        } catch { return [dev.deviceId, undefined] }
+      }))
+      if (!alive) return
+      setSwitchStates(prev => {
+        const next = { ...prev }
+        for (const [id, v] of entries) if (v !== undefined) next[id] = v
+        return next
+      })
+    }
+    poll()
+    const id = setInterval(poll, 5000)
+    return () => { alive = false; clearInterval(id) }
+  }, [switchIds])
 
   // ── PM2.5 mock (สุ่มทุก 30 นาที เหมือน MomayBUUV.pm) ─────────────────────
   useEffect(() => {
@@ -1645,37 +1748,104 @@ function MomayStatusRow() {
     return () => clearInterval(id)
   }, [])
 
-  // ── Bulb toggle → momaybuu /api/toggle-device → control /toggle → MQTT ──
+  // ── Bulb toggle → ถ้ามี switch device ใน registry ใช้ gateway, ไม่งั้น fallback momaybuu ──
   async function toggleBulb() {
-    const action = bulb ? 'OFF' : 'ON'
-    setBulb(v => !v)   // optimistic — light only
+    const next = !bulb
+    setBulb(next)   // optimistic — light only
     try {
-      await fetch(`${MOMAY_SERVER}/api/toggle-device`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ room: PRIMARY_ROOM, action }),
-      })
+      if (switchDev) {
+        await fetch(`${DEVICES_API}/api/tasmota/${encodeURIComponent(switchDev.deviceId)}/power`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ state: next }),
+        })
+      } else {
+        await fetch(`${MOMAY_SERVER}/api/toggle-device`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ room: ROOM, action: next ? 'ON' : 'OFF' }),
+        })
+      }
     } catch { /* ignore */ }
   }
 
-  // ── AC command → momaybuu /api/ac-command → control → MQTT ──────────────
+  // ดึงสถานะจริงของสวิตช์จาก gateway (มาจาก MQTT stat/POWER → meta.relay)
+  async function _fetchSwitchState(deviceId) {
+    try {
+      const r = await _fetchWithTimeout(`${DEVICES_API}/api/devices/${encodeURIComponent(deviceId)}`, 4000)
+      const j = await r.json()
+      if (!j?.ok || !j.device) return undefined
+      const d = j.device
+      if (d.status === 'offline') return null
+      if (typeof d?.meta?.relay === 'boolean') return d.meta.relay
+      return undefined
+    } catch { return undefined }
+  }
+
+  // ── Toggle สวิตช์รายตัว — สั่งแล้ว "รอ MQTT ยืนยันจริง" ก่อนค่อยแสดงไฟติด/ดับ (ไม่ optimistic) ──
+  async function toggleSwitch(dev) {
+    const id = dev.deviceId
+    if (switchPending[id]) return
+    const target = !(switchStates[id] === true)   // currently ON → OFF, ไม่งั้น → ON
+    setSwitchPending(p => ({ ...p, [id]: true }))
+    try {
+      await fetch(`${DEVICES_API}/api/tasmota/${encodeURIComponent(id)}/power`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state: target }),
+      })
+      // poll ถี่รอ stat/POWER จริง (สูงสุด ~6s) — เปลี่ยน UI เมื่อยืนยันได้เท่านั้น
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 600))
+        const st = await _fetchSwitchState(id)
+        if (st !== undefined) {
+          setSwitchStates(s => ({ ...s, [id]: st }))
+          if (st === target) break
+        }
+      }
+    } catch { /* ignore */ }
+    finally {
+      setSwitchPending(p => { const n = { ...p }; delete n[id]; return n })
+    }
+  }
+
+  // ── AC command → ถ้ามี ir-remote device ใช้ gateway/tuya, ไม่งั้น fallback momaybuu ──
   async function sendAcCommand(overrides = {}) {
-    const payload = { room: PRIMARY_ROOM, swing: 0, ...acState, ...overrides }
+    const next = { ...acState, ...overrides }
     setAcState(s => ({ ...s, ...overrides }))
     setAcSending(true)
     try {
-      await fetch(`${MOMAY_SERVER}/api/ac-command`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
+      if (irDev) {
+        await fetch(`${DEVICES_API}/api/tuya/${encodeURIComponent(irDev.deviceId)}/ir/ac`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ remoteId: irDev.meta?.remoteId, power: 1, swing: 0, ...next }),
+        })
+      } else {
+        await fetch(`${MOMAY_SERVER}/api/ac-command`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ room: ROOM, swing: 0, ...next }),
+        })
+      }
     } catch { /* ignore */ } finally { setAcSending(false) }
   }
 
-  // ── CCTV WebSocket — relay อยู่บน momaybuu main server ───────────────────
-  const CCTV_WS = 'wss://momaybuu-production.up.railway.app/ws/stream'
+  // ── CCTV — ใช้ camera device จาก registry (mjpeg ผ่าน api-gateway / ws) ไม่งั้น default ──
+  const CCTV_WS_DEFAULT = 'wss://momaybuu-production.up.railway.app/ws/stream'
+  const camMjpeg = (camDev?.meta?.streamKind === 'mjpeg' && camDev.meta.camId && CAM_BASE)
+    ? `${CAM_BASE}/stream/${encodeURIComponent(camDev.meta.camId)}`
+    : null
+  const camWs = camDev?.meta?.streamKind === 'ws' ? (camDev.meta.wsUrl || null) : null
   function cctvConnect() {
-    if (cctvWsRef.current) return
+    if (cctvWsRef.current || cctvImgRef.current?.dataset.mjpeg) return
     setCctvStatus('connecting')
-    const ws = new WebSocket(CCTV_WS)
+    // MJPEG: ใส่ src ให้ <img> ตรงๆ (multipart stream จาก api-gateway)
+    if (camMjpeg) {
+      if (cctvImgRef.current) {
+        cctvImgRef.current.dataset.mjpeg = '1'
+        cctvImgRef.current.onload  = () => setCctvStatus('live')
+        cctvImgRef.current.onerror = () => setCctvStatus('offline')
+        cctvImgRef.current.src = camMjpeg
+      }
+      return
+    }
+    const ws = new WebSocket(camWs || CCTV_WS_DEFAULT)
     ws.binaryType = 'arraybuffer'
     cctvWsRef.current = ws
     ws.onopen = () => {
@@ -1698,6 +1868,10 @@ function MomayStatusRow() {
 
   function cctvDisconnect() {
     if (cctvWsRef.current) { cctvWsRef.current.close(); cctvWsRef.current = null }
+    if (cctvImgRef.current?.dataset.mjpeg) {
+      cctvImgRef.current.onload = null; cctvImgRef.current.onerror = null
+      cctvImgRef.current.src = ''; delete cctvImgRef.current.dataset.mjpeg
+    }
     clearInterval(cctvTimerRef.current); clearInterval(cctvStaleRef.current)
     setCctvStatus('idle'); setCctvFps('')
   }
@@ -1721,10 +1895,10 @@ function MomayStatusRow() {
   }
 
   // Bulb SVG — ลอกจาก MomayBUUV.pm/index.html
-  const bulbSvg = (
+  const bulbSvg = (on) => (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 48" width="42" height="42" style={{ pointerEvents:'none' }}>
       <ellipse cx="32" cy="20" rx="14" ry="16"
-        fill={bulb ? '#ffe97a' : '#e0d8c0'} stroke="#74640a" strokeWidth="2" />
+        fill={on ? '#ffe97a' : '#e0d8c0'} stroke="#74640a" strokeWidth="2" />
       <rect x="27" y="34" width="10" height="8" rx="2" fill="#b5a76c" stroke="#74640a" strokeWidth="1.5"/>
       <line x1="27" y1="37" x2="37" y2="37" stroke="#74640a" strokeWidth="1"/>
       <line x1="27" y1="40" x2="37" y2="40" stroke="#74640a" strokeWidth="1"/>
@@ -1761,18 +1935,32 @@ function MomayStatusRow() {
 
   const cctvOn = cctvStatus === 'live' ? true : cctvStatus === 'connecting' ? null : false
 
+  // ปุ่มไฟ: อิง switch device ใน registry อย่างเดียว (สถานะจริงจาก MQTT) — ห้องไม่มีสวิตช์ = ไม่มีปุ่ม
+  // ไม่ใช้ room-state ของ momaybuu เดิมแล้ว (เคยโชว์ ON ปลอม)
+  const lightItems = switchDevs.map(dev => {
+    const on = dev.deviceId in switchStates
+      ? switchStates[dev.deviceId]
+      : (typeof dev.meta?.relay === 'boolean' ? dev.meta.relay : null)
+    return {
+      key: dev.deviceId,
+      label: dev.label || (dev.channel ? `สวิตช์ ${dev.channel}` : 'แสงสว่าง'),
+      on, onLabel: 'เปิด', offLabel: 'ปิด', iconColor: '#e8c840',
+      iconEl: bulbSvg(on),
+      onClick: () => toggleSwitch(dev),
+      pending: !!switchPending[dev.deviceId],
+    }
+  })
+
   const items = [
+    ...lightItems,
     {
-      label: 'แสงสว่าง', on: bulb, onLabel: 'เปิด', offLabel: 'ปิด', iconColor: '#e8c840',
-      iconEl: bulbSvg,
-      onClick: toggleBulb,
-    },
-    {
+      key: 'ac',
       label: 'แอร์', on: ac, onLabel: 'เปิด', offLabel: 'ปิด', iconColor: '#74b8c8',
       iconEl: acSvg,
       onClick: () => setAcOpen(true),
     },
     {
+      key: 'cctv',
       label: 'กล้องวงจรปิด', on: cctvOn, onLabel: 'ออนไลน์', offLabel: 'ออฟไลน์', iconColor: '#a89030',
       iconEl: cctvSvg,
       onClick: () => setCctvOpen(true),
@@ -1780,7 +1968,7 @@ function MomayStatusRow() {
     (() => {
       const lv = _pm25Level(pm25)
       return {
-        label: 'PM2.5', iconColor: lv.color,
+        key: 'pm', label: 'PM2.5', iconColor: lv.color,
         on: pm25 !== null ? true : null,
         onLabel: lv.label, offLabel: '--',
         statusColor: lv.color,
@@ -1801,9 +1989,9 @@ function MomayStatusRow() {
   return (
     <>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, width: '100%' }}>
-        {items.map(({ label, on, onLabel, offLabel, iconColor, iconEl, onClick, statusColor }) => (
-          <div key={label}
-            onClick={onClick || undefined}
+        {items.map(({ key, label, on, onLabel, offLabel, iconColor, iconEl, onClick, statusColor, pending }) => (
+          <div key={key || label}
+            onClick={pending ? undefined : (onClick || undefined)}
             style={{
               flex: '1 1 140px',
               background: on === null
@@ -1830,8 +2018,9 @@ function MomayStatusRow() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
               <div style={{ color: on === null ? '#555' : on ? '#d1d5db' : '#9ca3af', fontSize: 11, fontWeight: 600, letterSpacing: 0.3 }}>{label}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                <StatusDot on={on} />
-                <StatusText on={on} onLabel={onLabel} offLabel={offLabel} color={statusColor} />
+                {pending
+                  ? <span style={{ color: '#FFB800', fontSize: 11, fontWeight: 700 }}>กำลังสั่ง…</span>
+                  : <><StatusDot on={on} /><StatusText on={on} onLabel={onLabel} offLabel={offLabel} color={statusColor} /></>}
               </div>
             </div>
           </div>
@@ -1935,7 +2124,7 @@ function MomayStatusRow() {
 }
 
 // ── Bill Panel — ported from script.js energyChart + bill circles ─────────
-function MomayBillPanel({ todayBill, yesterdayBill }) {
+function MomayBillPanel({ todayBill, yesterdayBill, apiBase = MOMAY_API }) {
   const chartRef    = useRef(null)
   const chartInst   = useRef(null)
   const [endDate, setEndDate] = useState(() => new Date())
@@ -1967,7 +2156,7 @@ function MomayBillPanel({ todayBill, yesterdayBill }) {
         }
         const fmtLabel = d => d.toLocaleDateString('th-TH', { day: '2-digit', month: 'short' })
         const results = await Promise.all(
-          days.map(d => fetch(`${MOMAY_API}/daily-bill?date=${_localDateStr(d)}`).then(r => r.json()).catch(() => null))
+          days.map(d => fetch(`${apiBase}/daily-bill?date=${_localDateStr(d)}`).then(r => r.json()).catch(() => null))
         )
         if (cancelled || !chartRef.current) return
 
@@ -2017,7 +2206,7 @@ function MomayBillPanel({ todayBill, yesterdayBill }) {
     }
     load()
     return () => { cancelled = true }
-  }, [endDate])
+  }, [endDate, apiBase])
 
   useEffect(() => () => { if (chartInst.current) chartInst.current.destroy() }, [])
 
@@ -2123,7 +2312,8 @@ class MomayErrorBoundary extends Component {
 }
 
 function MomayRelationshipLayerInner() {
-  const [selectedFloor, setSelected] = useState(0)   // 0-based index — opens on ห้อง 101
+  const [selectedFloor, setSelected] = useState(0)   // 0-based index — opens on การ์ดแรก (ทั้งอาคาร)
+  const [, setCfgVersion] = useState(0)              // bump เพื่อ re-render หลังโหลด config
   const [bookingOpen, setBookingOpen] = useState(false)
   const [calOpen, setCalOpen]         = useState(false)
   const [solarOpen, setSolarOpen]     = useState(false)
@@ -2133,6 +2323,28 @@ function MomayRelationshipLayerInner() {
   const calIconRef   = useRef(null)
   const solarIconRef = useRef(null)
   const bellIconRef  = useRef(null)
+
+  // โหลดห้อง/อุปกรณ์จาก gateway (/api/config) → แทน BUU_ROOMS ที่ hardcode; ถ้าล้มเหลวใช้ค่า default
+  useEffect(() => {
+    let alive = true
+    // ใช้ค่า cache ล่าสุดก่อน (กรณี gateway ดับ ดีกว่า fallback hardcode) — key เดียวกับหน้า /settings
+    try {
+      const cached = JSON.parse(localStorage.getItem('momay_config_cache') || 'null')
+      if (cached && cached.length) { const m = mapConfigRooms(cached); BUU_ROOMS = m; FLOORS = m }
+    } catch {}
+    fetch(`${DEVICES_API}/api/config`)
+      .then(r => r.json())
+      .then(j => {
+        if (!alive || !j.ok || !Array.isArray(j.rooms) || !j.rooms.length) return
+        const mapped = mapConfigRooms(j.rooms)
+        BUU_ROOMS = mapped
+        FLOORS = mapped
+        try { localStorage.setItem('momay_config_cache', JSON.stringify(j.rooms)) } catch {}
+        setCfgVersion(v => v + 1)
+      })
+      .catch(() => {})   // fallback: คง cache/default ที่ตั้งไว้
+    return () => { alive = false }
+  }, [])
 
   useEffect(() => {
     if (!document.getElementById('momay-shake-style')) {
@@ -2175,7 +2387,7 @@ function MomayRelationshipLayerInner() {
     load()
     const id = setInterval(load, 60000)
     return () => clearInterval(id)
-  }, [selectedFloor])
+  }, [selectedFloor, BUU_ROOMS[selectedFloor]?.apiBase])
 
   // ── API gateway ──────────────────────────────────────────────────────────
   const apiBase = (new URLSearchParams(window.location.search).get('gateway') || import.meta.env.VITE_GATEWAY_URL || '').replace(/\/$/, '')
@@ -2220,7 +2432,7 @@ function MomayRelationshipLayerInner() {
       fetch(`${roomApi}/daily-bill?date=${_bkkToday()}`).then(r => r.json()).then(setEnergyToday).catch(() => {})
     }, 60000)
     return () => clearInterval(id)
-  }, [selectedFloor])
+  }, [selectedFloor, BUU_ROOMS[selectedFloor]?.apiBase])
 
   const todayBill  = energyToday?.electricity_bill ?? null
   const todayUnit  = energyToday?.total_energy_kwh ?? null
@@ -2241,7 +2453,7 @@ function MomayRelationshipLayerInner() {
     let alive = true
     async function poll() {
       try {
-        const r = await fetch(`${MOMAY_SERVER}/api/active-booking?room=${encodeURIComponent(room)}`)
+        const r = await fetch(`${DEVICES_API}/api/active-booking?room=${encodeURIComponent(room)}`)
         const j = await r.json()
         if (alive) setActiveBooking(j.hasActiveBooking ? j : null)
       } catch { if (alive) setActiveBooking(null) }
@@ -2753,6 +2965,8 @@ function MomayRelationshipLayerInner() {
         <MomayPowerChart
           onBookingClick={() => setBookingOpen(true)}
           roomLabel={BUU_ROOMS[selectedFloor]?.label ?? 'BUU Library'}
+          apiBase={BUU_ROOMS[selectedFloor]?.apiBase ?? MOMAY_API}
+          device={BUU_ROOMS[selectedFloor]?.device ?? 'pm_deer'}
         />
       </div>
 
@@ -2780,13 +2994,16 @@ function MomayRelationshipLayerInner() {
       {/* ══ Status Row ══ */}
       <div style={{ display: 'flex', justifyContent: 'center' }}>
         <div style={{ border: '1.5px solid rgba(255,184,0,0.2)', background: '#111111', padding: '8px 12px', borderRadius: 12, width: '100%', maxWidth: 720 }}>
-          <MomayStatusRow />
+          <MomayStatusRow
+            room={BUU_ROOMS[selectedFloor]?.id ?? BUU_ROOMS[0].id}
+            devices={BUU_ROOMS[selectedFloor]?.devices ?? []}
+          />
         </div>
       </div>
 
       {/* ══ Bill Compare ══ */}
       <div className="w-full rounded-2xl overflow-hidden" style={{ border: '1.5px solid rgba(255,184,0,0.25)' }}>
-        <MomayBillPanel todayBill={energyToday} yesterdayBill={energyYesterday} />
+        <MomayBillPanel todayBill={energyToday} yesterdayBill={energyYesterday} apiBase={BUU_ROOMS[selectedFloor]?.apiBase ?? MOMAY_API} />
       </div>
 
       {/* ══ Bottom row — Layer 1 + Layer 2 ══ */}
