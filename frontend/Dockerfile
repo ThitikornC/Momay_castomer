@@ -5,11 +5,13 @@ COPY package*.json ./
 RUN npm ci
 COPY . .
 
-# Receive Railway Variables as build args
+# Receive Railway Variables as build args (Vite ฝังค่าตอน build → ต้องส่งครบทุกตัวที่โค้ดใช้)
 ARG VITE_GATEWAY_URL
 ARG VITE_HOME
+ARG VITE_DEVICES_API
 ENV VITE_GATEWAY_URL=$VITE_GATEWAY_URL
 ENV VITE_HOME=$VITE_HOME
+ENV VITE_DEVICES_API=$VITE_DEVICES_API
 
 RUN npm run build
 
