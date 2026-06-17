@@ -1,6 +1,5 @@
 # Python on-site (ไม่ต้องขึ้น cloud)
 main.py
-requirements.txt
 config.json
 static/
 templates/
