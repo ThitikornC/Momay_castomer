@@ -1396,7 +1396,6 @@ function MomayBookingPopup({ open, onClose, room }) {
             {qrUrl
               ? <img src={qrUrl} alt="check-in QR" width={200} height={200} style={{ background: '#fff', padding: 8, borderRadius: 10 }} />
               : <div style={{ color: '#888', fontSize: 12 }}>กำลังสร้าง QR…</div>}
-            <div style={{ color: '#60a5fa', fontSize: 10, wordBreak: 'break-all' }}>{checkinUrl}</div>
             <div style={{ color: '#666', fontSize: 11 }}>สแกนด้วยมือถือเพื่อเช็คอิน → ไฟเปิดอัตโนมัติในช่วงเวลาจอง</div>
           </div>
         )}
@@ -1661,6 +1660,8 @@ function MomayStatusRow({ room, devices = [] }) {
   const [cctvOk, setCctv] = useState(null)
   const [apiOk, setApi]   = useState(null)
   const [pm25, setPm25]   = useState(null)   // µg/m³ float or null
+  const [activeBooking, setActiveBooking] = useState(null)   // การจองที่กำลัง active ของห้องนี้
+  const [nowTick, setNowTick] = useState(() => Date.now())   // เดิน 1 วิ → ขับ countdown
 
   // AC panel
   const [acOpen, setAcOpen]   = useState(false)
@@ -1670,6 +1671,7 @@ function MomayStatusRow({ room, devices = [] }) {
   // CCTV popup
   const [cctvOpen, setCctvOpen] = useState(false)
   const [cctvStatus, setCctvStatus] = useState('idle')  // idle|connecting|live|offline
+  const [camLive, setCamLive] = useState(null)          // health อิสระจาก popup (poll /cameras) — true|false|null
   const [cctvFps, setCctvFps] = useState('')
   const cctvImgRef = useRef(null)
   const cctvWsRef  = useRef(null)
@@ -1747,6 +1749,41 @@ function MomayStatusRow({ room, devices = [] }) {
     const id = setInterval(refreshPm25, 30 * 60 * 1000)
     return () => clearInterval(id)
   }, [])
+
+  // ── Active booking ของห้องนี้ (poll ทุก 30 วิ) ───────────────────────────
+  useEffect(() => {
+    setActiveBooking(null)
+    let alive = true
+    async function poll() {
+      try {
+        const r = await fetch(`${DEVICES_API}/api/active-booking?room=${encodeURIComponent(ROOM)}`)
+        const j = await r.json()
+        if (alive) setActiveBooking(j.hasActiveBooking ? j : null)
+      } catch { if (alive) setActiveBooking(null) }
+    }
+    poll()
+    const id = setInterval(poll, 30000)
+    return () => { alive = false; clearInterval(id) }
+  }, [ROOM])
+
+  // ── Ticker 1 วิ → ขับ countdown (เดินเฉพาะตอนที่คนจอง "เช็คอินแล้ว") ──────
+  useEffect(() => {
+    if (!activeBooking?.checkedIn) return
+    const id = setInterval(() => setNowTick(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [activeBooking?.checkedIn])
+
+  // เวลาเหลือถึงเวลาเลิกจอง — เริ่มนับหลังคนจองเช็คอินแล้วเท่านั้น → "HH:MM:SS"
+  const bookingCountdown = (() => {
+    if (!activeBooking?.checkedIn || !activeBooking?.date || !activeBooking?.endTime) return null
+    const end = new Date(`${activeBooking.date}T${activeBooking.endTime}:00`).getTime()
+    if (!Number.isFinite(end)) return null
+    const diff = Math.max(0, Math.floor((end - nowTick) / 1000))
+    const hh = String(Math.floor(diff / 3600)).padStart(2, '0')
+    const mm = String(Math.floor((diff % 3600) / 60)).padStart(2, '0')
+    const ss = String(diff % 60).padStart(2, '0')
+    return `${hh}:${mm}:${ss}`
+  })()
 
   // ── Bulb toggle → ถ้ามี switch device ใน registry ใช้ gateway, ไม่งั้น fallback momaybuu ──
   async function toggleBulb() {
@@ -1882,6 +1919,30 @@ function MomayStatusRow({ room, devices = [] }) {
     return () => cctvDisconnect()
   }, [cctvOpen])
 
+  // ── Health อิสระ: poll {cctvServer}/cameras ดู relay_connected ของ cam นี้ (ws เท่านั้น) ──
+  // ทำให้การ์ด "กล้องวงจรปิด" โชว์ออนไลน์ได้โดยไม่ต้องเปิด popup. หยุด poll ตอน popup เปิด (ใช้ cctvStatus แทน)
+  useEffect(() => {
+    if (!camWs || cctvOpen) return
+    let camId, healthUrl
+    try {
+      const u = new URL(camWs)
+      camId = u.searchParams.get('cam')
+      healthUrl = `${u.protocol === 'wss:' ? 'https:' : 'http:'}//${u.host}/cameras`
+    } catch { return }
+    let cancelled = false
+    const ping = async () => {
+      try {
+        const r = await fetch(healthUrl, { cache: 'no-store' })
+        const cams = await r.json()
+        const me = Array.isArray(cams) ? cams.find(c => String(c.cam) === String(camId)) : null
+        if (!cancelled) setCamLive(!!(me && me.relay_connected))
+      } catch { if (!cancelled) setCamLive(false) }
+    }
+    ping()
+    const id = setInterval(ping, 10000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [camWs, cctvOpen])
+
   // ── Helpers ───────────────────────────────────────────────────────────────
   function StatusDot({ on }) {
     if (on === null) return <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#444', display: 'inline-block', flexShrink: 0 }} />
@@ -1929,11 +1990,11 @@ function MomayStatusRow({ room, devices = [] }) {
         <rect x="14" y="19" width="32" height="14" rx="2" fill="#e0d8c0" stroke="#74640a" strokeWidth="2"/>
         <rect x="4" y="21" width="12" height="10" rx="2" fill="#e0d8c0" stroke="#74640a" strokeWidth="1.5"/>
       </g>
-      <circle cx="22" cy="30" r="1.5" fill={cctvStatus === 'live' ? '#2ecc40' : '#cc0000'}/>
+      <circle cx="22" cy="30" r="1.5" fill={(cctvStatus === 'live' || camLive) ? '#2ecc40' : '#cc0000'}/>
     </svg>
   )
 
-  const cctvOn = cctvStatus === 'live' ? true : cctvStatus === 'connecting' ? null : false
+  const cctvOn = cctvStatus === 'live' ? true : cctvStatus === 'connecting' ? null : camLive
 
   // ปุ่มไฟ: อิง switch device ใน registry อย่างเดียว (สถานะจริงจาก MQTT) — ห้องไม่มีสวิตช์ = ไม่มีปุ่ม
   // ไม่ใช้ room-state ของ momaybuu เดิมแล้ว (เคยโชว์ ON ปลอม)
@@ -1965,6 +2026,30 @@ function MomayStatusRow({ room, devices = [] }) {
       iconEl: cctvSvg,
       onClick: () => setCctvOpen(true),
     },
+    // ── Countdown — แสดงตลอด (อยู่หลังกล้อง ก่อน PM); --:--:-- เมื่อไม่มีจอง/ยังไม่เช็คอิน, เริ่มนับหลังคนจองเช็คอิน ──
+    {
+      key: 'countdown',
+      label: 'เหลือเวลาจอง',
+      on: activeBooking?.checkedIn ? true : null,   // null = สไตล์ inactive (เทา) เหมือนช่องอื่นที่ปิดอยู่
+      iconColor: '#FFB800',
+      iconEl: <span style={{ fontSize: 26, lineHeight: 1 }}>⏱️</span>,
+      onClick: null,
+      statusEl: activeBooking?.checkedIn ? (
+        <>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: '#4ade80', boxShadow: '0 0 6px #4ade80', display: 'inline-block' }} />
+          <span style={{ color: '#FFB800', fontWeight: 800, fontSize: 14, letterSpacing: 1, fontFamily: 'monospace', textShadow: '0 0 8px rgba(255,184,0,0.4)' }}>
+            {bookingCountdown}
+          </span>
+        </>
+      ) : activeBooking ? (
+        <>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: '#FFB800', boxShadow: '0 0 6px #FFB800', display: 'inline-block' }} />
+          <span style={{ color: '#FFB800', fontWeight: 700, fontSize: 11 }}>รอเช็คอิน</span>
+        </>
+      ) : (
+        <span style={{ color: '#555', fontWeight: 700, fontSize: 14, letterSpacing: 1, fontFamily: 'monospace' }}>--:--:--</span>
+      ),
+    },
     (() => {
       const lv = _pm25Level(pm25)
       return {
@@ -1988,12 +2073,13 @@ function MomayStatusRow({ room, devices = [] }) {
 
   return (
     <>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, width: '100%' }}>
-        {items.map(({ key, label, on, onLabel, offLabel, iconColor, iconEl, onClick, statusColor, pending }) => (
+      <div style={{ display: 'flex', flexWrap: 'nowrap', gap: 8, width: '100%', overflowX: 'auto' }}>
+        {items.map(({ key, label, on, onLabel, offLabel, iconColor, iconEl, onClick, statusColor, statusEl, pending }) => (
           <div key={key || label}
             onClick={pending ? undefined : (onClick || undefined)}
             style={{
-              flex: '1 1 140px',
+              flex: '1 1 0',
+              minWidth: 120,   // การ์ดทุกใบอยู่แถวเดียว แชร์พื้นที่เท่ากัน (เลื่อนแนวนอนได้ถ้าจอแคบ)
               background: on === null
                 ? 'linear-gradient(135deg,#181818 0%,#0d0d0d 100%)'
                 : on
@@ -2020,7 +2106,9 @@ function MomayStatusRow({ room, devices = [] }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                 {pending
                   ? <span style={{ color: '#FFB800', fontSize: 11, fontWeight: 700 }}>กำลังสั่ง…</span>
-                  : <><StatusDot on={on} /><StatusText on={on} onLabel={onLabel} offLabel={offLabel} color={statusColor} /></>}
+                  : statusEl
+                    ? statusEl
+                    : <><StatusDot on={on} /><StatusText on={on} onLabel={onLabel} offLabel={offLabel} color={statusColor} /></>}
               </div>
             </div>
           </div>
@@ -2444,25 +2532,6 @@ function MomayRelationshipLayerInner() {
     ? `${trendPct >= 0 ? '+' : ''}${trendPct.toFixed(1)}%`
     : '--'
   const trendUp = trendPct == null || trendPct >= 0
-
-  // ── Active booking for selected room ────────────────────────────────────
-  const [activeBooking, setActiveBooking] = useState(null)
-  useEffect(() => {
-    const room = BUU_ROOMS[selectedFloor]?.id ?? BUU_ROOMS[0].id
-    setActiveBooking(null)
-    let alive = true
-    async function poll() {
-      try {
-        const r = await fetch(`${DEVICES_API}/api/active-booking?room=${encodeURIComponent(room)}`)
-        const j = await r.json()
-        if (alive) setActiveBooking(j.hasActiveBooking ? j : null)
-      } catch { if (alive) setActiveBooking(null) }
-    }
-    poll()
-    const id = setInterval(poll, 30000)
-    return () => { alive = false; clearInterval(id) }
-  }, [selectedFloor])
-  // ─────────────────────────────────────────────────────────────────────────
 
   // ── Per-floor API data (null = use mock animation) ──────────────────────
   // When real API is ready, replace null entries with Float32Array(cells.length)
@@ -2993,7 +3062,7 @@ function MomayRelationshipLayerInner() {
 
       {/* ══ Status Row ══ */}
       <div style={{ display: 'flex', justifyContent: 'center' }}>
-        <div style={{ border: '1.5px solid rgba(255,184,0,0.2)', background: '#111111', padding: '8px 12px', borderRadius: 12, width: '100%', maxWidth: 720 }}>
+        <div style={{ border: '1.5px solid rgba(255,184,0,0.2)', background: '#111111', padding: '8px 12px', borderRadius: 12, width: '100%', maxWidth: 940 }}>
           <MomayStatusRow
             room={BUU_ROOMS[selectedFloor]?.id ?? BUU_ROOMS[0].id}
             devices={BUU_ROOMS[selectedFloor]?.devices ?? []}
