@@ -12,12 +12,13 @@ const counts = new Map();          // camId → { count, ts(ms) }
 const STALE_MS = 30_000;           // ไม่ได้อัปเดตเกินนี้ = ถือว่ากล้องเงียบ/ดับ
 
 router.post('/camera-count', (req, res) => {
-  const { camId, count } = req.body || {};
+  const { camId, count, pct } = req.body || {};
   if (camId == null || count == null) {
     return res.status(400).json({ ok: false, error: 'camId & count required' });
   }
   const n = Math.max(0, parseInt(count, 10) || 0);
-  counts.set(String(camId), { count: n, ts: Date.now() });
+  const p = pct == null ? null : Math.max(0, Math.min(100, parseInt(pct, 10) || 0)); // % พื้นที่ที่มีคน
+  counts.set(String(camId), { count: n, pct: p, ts: Date.now() });
   res.json({ ok: true });
 });
 
@@ -25,7 +26,7 @@ router.get('/camera-counts', (_req, res) => {
   const now = Date.now();
   const out = {};
   for (const [camId, v] of counts) {
-    out[camId] = { count: v.count, ts: v.ts, stale: now - v.ts > STALE_MS };
+    out[camId] = { count: v.count, pct: v.pct ?? null, ts: v.ts, stale: now - v.ts > STALE_MS };
   }
   res.json({ ok: true, counts: out });
 });

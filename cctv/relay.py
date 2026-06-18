@@ -18,6 +18,7 @@ import logging
 import urllib.request
 
 import cv2
+import numpy as np
 import websockets
 from dotenv import load_dotenv
 
@@ -64,10 +65,23 @@ async def ensure_detector():
     return _detector
 
 
-def _post_count(cam_id, count):
-    """ส่งจำนวนคนของกล้องขึ้น gateway (fire-and-forget, ห้าม raise)"""
+def _coverage_pct(boxes, shape):
+    """% พื้นที่ที่มีคน = พื้นที่กล่องคน (union) ÷ พื้นที่ภาพทั้งหมด × 100 (ภาพเต็ม=100%)"""
+    if not boxes:
+        return 0
+    h, w = shape[:2]
+    if h * w == 0:
+        return 0
+    mask = np.zeros((h, w), dtype=bool)
+    for (x1, y1, x2, y2, _c) in boxes:
+        mask[max(0, y1):max(0, y2), max(0, x1):max(0, x2)] = True
+    return int(round(float(mask.mean()) * 100))
+
+
+def _post_count(cam_id, count, pct):
+    """ส่งจำนวนคน + % พื้นที่ ของกล้องขึ้น gateway (fire-and-forget, ห้าม raise)"""
     try:
-        data = json.dumps({"camId": str(cam_id), "count": int(count)}).encode()
+        data = json.dumps({"camId": str(cam_id), "count": int(count), "pct": int(pct)}).encode()
         req = urllib.request.Request(
             f"{GATEWAY_URL}/api/camera-count", data=data,
             headers={"Content-Type": "application/json"}, method="POST")
@@ -168,9 +182,10 @@ async def camera_task(cam):
                         if frame_i % DETECT_EVERY_N == 0:      # detect ทุก N เฟรม (offload เข้า thread)
                             last_boxes = await asyncio.to_thread(detector.detect, frame)
                         count = PersonDetector.draw(frame, last_boxes)
-                        if time.time() - last_post >= COUNT_POST_SEC:   # ส่ง count ขึ้น gateway → heatmap
+                        if time.time() - last_post >= COUNT_POST_SEC:   # ส่ง count + % พื้นที่ ขึ้น gateway → heatmap
                             last_post = time.time()
-                            asyncio.create_task(asyncio.to_thread(_post_count, cam_id, count))
+                            pct = _coverage_pct(last_boxes, frame.shape)
+                            asyncio.create_task(asyncio.to_thread(_post_count, cam_id, count, pct))
                 ok, jpeg = cv2.imencode(".jpg", frame, enc)
                 if not ok: continue
                 try:

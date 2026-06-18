@@ -2550,15 +2550,14 @@ function MomayRelationshipLayerInner() {
     const id = setInterval(poll, 3000)
     return () => { alive = false; clearInterval(id) }
   }, [])
-  // ขั้น 1: % จากกล้อง = count ÷ "คนที่ถือว่าเต็มภาพ" (meta.capacity ราย-กล้อง) → 0..100
-  // null = ไม่มีกล้อง/เงียบ/ยังไม่ตั้ง capacity (จะโชว์ --% ไม่ใช่ mock)
+  // ขั้น 1: % จากกล้อง = พื้นที่ที่มีคน ÷ ภาพทั้งหมด (relay คำนวณส่งมาเป็น pct) → 0..100
+  // null = ไม่มีกล้อง/เงียบ/ไม่มี pct (จะโชว์ --% ไม่ใช่ mock)
   function roomOccupancy(room) {
     const cam = room?.devices?.find(d => d.category === 'camera')
     const camId = cam?.meta?.camId
-    const cap = Number(cam?.meta?.capacity) || 0
     const c = camId != null ? camCounts[String(camId)] : null
-    if (!c || c.stale || cap <= 0) return null
-    return { count: c.count, capacity: cap, pct: Math.min(100, Math.round((c.count / cap) * 100)) }
+    if (!c || c.stale || c.pct == null) return null
+    return { count: c.count, pct: c.pct }
   }
   // ขั้น 2: เอา % ไประบายพื้นที่ heatmap (zone payload {A,B,C} = pct/100)
   const floorApiData = BUU_ROOMS.map(room => {
@@ -2577,10 +2576,9 @@ function MomayRelationshipLayerInner() {
     return {
       floorId: room.id,
       floorLabel: room.label,
-      people: occ?.pct ?? null,            // % occupancy จริง ; null = ไม่มีข้อมูล → โชว์ --%
+      people: occ?.pct ?? null,            // % พื้นที่ที่มีคน ; null = ไม่มีข้อมูล → โชว์ --%
       live: !!occ,
       count: occ?.count ?? null,
-      capacity: occ?.capacity ?? null,
     }
   })
   const selectedFloorId = BUU_ROOMS[selectedFloor]?.id
@@ -2771,7 +2769,7 @@ function MomayRelationshipLayerInner() {
                   </div>
                   <div style={{ color: '#8a7060', fontSize: 10 }}>
                     {selectedTrackRow.live
-                      ? `${selectedTrackRow.count}/${selectedTrackRow.capacity} คน`
+                      ? `${selectedTrackRow.count} คน · ${selectedTrackRow.people}% ของพื้นที่`
                       : 'ยังไม่มีข้อมูลกล้อง'}
                   </div>
                 </div>

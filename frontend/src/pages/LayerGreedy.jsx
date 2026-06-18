@@ -35,7 +35,7 @@ export default function LayerGreedy() {
         for (const room of (j.rooms || []))
           for (const d of (room.devices || []))
             if (d.category === 'camera' && d.meta?.camId)
-              list.push({ camId: String(d.meta.camId), label: d.label || `กล้อง ${d.meta.camId}`, capacity: Number(d.meta?.capacity) || 0 })
+              list.push({ camId: String(d.meta.camId), label: d.label || `กล้อง ${d.meta.camId}` })
         if (alive) setCams(list)
       } catch { /* keep */ }
     }
@@ -68,7 +68,7 @@ export default function LayerGreedy() {
     const cc = counts[c.camId]
     const live = !!cc && !cc.stale
     const count = cc?.count ?? 0
-    const pct = (live && c.capacity > 0) ? Math.min(100, Math.round((count / c.capacity) * 100)) : null
+    const pct = (live && cc.pct != null) ? cc.pct : null   // % พื้นที่ที่มีคน (relay คำนวณ)
     return { ...c, live, count, pct }
   })
   const livePcts = camRows.filter(r => r.pct != null).map(r => r.pct)
@@ -173,7 +173,7 @@ export default function LayerGreedy() {
                           {cam.live && <span className="text-[7px] bg-green-500/20 text-green-400 px-1 py-0.5 rounded font-bold tracking-wider flex-shrink-0">LIVE</span>}
                         </div>
                         <span className="text-[9px] font-semibold tracking-wide leading-snug mt-0.5 truncate" style={{ color: `${color}cc` }}>
-                          {pct == null ? (cam.capacity > 0 ? 'รอข้อมูลกล้อง' : 'ยังไม่ตั้งคนเต็มภาพ') : `${camLabel(pct)} · ${cam.count} คน`}
+                          {pct == null ? 'รอข้อมูลกล้อง' : `${camLabel(pct)} · ${cam.count} คน`}
                         </span>
                       </div>
                     </div>
