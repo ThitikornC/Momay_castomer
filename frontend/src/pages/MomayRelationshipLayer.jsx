@@ -1705,6 +1705,12 @@ function MomayStatusRow({ room, devices = [] }) {
   const [cctvOpen, setCctvOpen] = useState(false)
   const [camIdx, setCamIdx] = useState(0)               // กล้องที่กำลังดูใน popup (ห้องมีหลายกล้อง)
   const [cctvGrid, setCctvGrid] = useState(false)       // ดูแบบ grid (ทุกกล้องพร้อมกัน)
+  const [isFull, setIsFull] = useState(false)           // อยู่โหมดเต็มจอ
+  useEffect(() => {
+    const onFs = () => setIsFull(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onFs)
+    return () => document.removeEventListener('fullscreenchange', onFs)
+  }, [])
   const [cctvStatus, setCctvStatus] = useState('idle')  // idle|connecting|live|offline
   const [camLive, setCamLive] = useState(null)          // health อิสระจาก popup (poll /cameras) — true|false|null
   const [cctvFps, setCctvFps] = useState('')
@@ -2229,7 +2235,7 @@ function MomayStatusRow({ room, devices = [] }) {
       {cctvOpen && (
         <div onClick={e => { if (e.target === e.currentTarget) setCctvOpen(false) }}
           style={{ position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div ref={cctvCardRef} style={{ background: '#0a0a0a', border: '1.5px solid rgba(167,139,250,0.4)', borderRadius: 14, overflow: 'hidden', width: cctvGrid ? 760 : 440, maxWidth: '94vw', boxShadow: '0 0 40px rgba(167,139,250,0.15)' }}>
+          <div ref={cctvCardRef} style={{ background: '#0a0a0a', border: isFull ? 'none' : '1.5px solid rgba(167,139,250,0.4)', borderRadius: isFull ? 0 : 14, overflow: 'hidden', width: isFull ? '100vw' : (cctvGrid ? 760 : 440), height: isFull ? '100vh' : 'auto', maxWidth: isFull ? '100vw' : '94vw', boxShadow: isFull ? 'none' : '0 0 40px rgba(167,139,250,0.15)', display: isFull ? 'flex' : 'block', flexDirection: 'column' }}>
             {/* Header */}
             <div style={{ background: 'linear-gradient(135deg, rgba(167,139,250,0.2), rgba(167,139,250,0.08))', padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(167,139,250,0.2)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2258,7 +2264,7 @@ function MomayStatusRow({ room, devices = [] }) {
             </div>
             {/* Video feed */}
             {cctvGrid ? (
-              <div style={{ background: '#000', padding: 8, display: 'grid', gap: 8, gridTemplateColumns: nCams <= 1 ? '1fr' : nCams <= 4 ? '1fr 1fr' : '1fr 1fr 1fr' }}>
+              <div style={{ background: '#000', padding: 8, display: 'grid', gap: 8, gridTemplateColumns: nCams <= 1 ? '1fr' : nCams <= 4 ? '1fr 1fr' : '1fr 1fr 1fr', ...(isFull ? { flex: 1, overflowY: 'auto', alignContent: 'start' } : {}) }}>
                 {camDevs.map((d, i) => (
                   <CctvTile key={d.deviceId || i} wsUrl={camWsOf(d)}
                     label={d.label || (d.meta?.camId ? `กล้อง ${d.meta.camId}` : `กล้อง ${i + 1}`)}
@@ -2266,7 +2272,7 @@ function MomayStatusRow({ room, devices = [] }) {
                 ))}
               </div>
             ) : (
-            <div style={{ position: 'relative', background: '#000', aspectRatio: '4/3' }}
+            <div style={{ position: 'relative', background: '#000', ...(isFull ? { flex: 1, minHeight: 0 } : { aspectRatio: '4/3' }) }}
               onTouchStart={e => { touchXRef.current = e.changedTouches[0].clientX }}
               onTouchEnd={e => {
                 if (touchXRef.current == null || nCams < 2) return
@@ -2283,9 +2289,13 @@ function MomayStatusRow({ room, devices = [] }) {
               )}
               {nCams > 1 && (<>
                 <button onClick={prevCam} aria-label="กล้องก่อนหน้า"
-                  style={{ position: 'absolute', top: '50%', left: 8, transform: 'translateY(-50%)', width: 34, height: 34, borderRadius: '50%', background: 'rgba(0,0,0,0.45)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', fontSize: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
+                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(167,139,250,0.6)'; e.currentTarget.style.transform = 'translateY(-50%) scale(1.08)' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.38)'; e.currentTarget.style.transform = 'translateY(-50%) scale(1)' }}
+                  style={{ position: 'absolute', top: '50%', left: 10, transform: 'translateY(-50%)', width: 38, height: 38, borderRadius: '50%', background: 'rgba(0,0,0,0.38)', border: '1px solid rgba(255,255,255,0.18)', color: '#fff', fontSize: 20, lineHeight: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', outline: 'none', backdropFilter: 'blur(4px)', WebkitTapHighlightColor: 'transparent', transition: 'background .2s, transform .15s', paddingRight: 2 }}>‹</button>
                 <button onClick={nextCam} aria-label="กล้องถัดไป"
-                  style={{ position: 'absolute', top: '50%', right: 8, transform: 'translateY(-50%)', width: 34, height: 34, borderRadius: '50%', background: 'rgba(0,0,0,0.45)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', fontSize: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>›</button>
+                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(167,139,250,0.6)'; e.currentTarget.style.transform = 'translateY(-50%) scale(1.08)' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.38)'; e.currentTarget.style.transform = 'translateY(-50%) scale(1)' }}
+                  style={{ position: 'absolute', top: '50%', right: 10, transform: 'translateY(-50%)', width: 38, height: 38, borderRadius: '50%', background: 'rgba(0,0,0,0.38)', border: '1px solid rgba(255,255,255,0.18)', color: '#fff', fontSize: 20, lineHeight: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', outline: 'none', backdropFilter: 'blur(4px)', WebkitTapHighlightColor: 'transparent', transition: 'background .2s, transform .15s', paddingLeft: 2 }}>›</button>
                 <div style={{ position: 'absolute', bottom: 8, left: 0, right: 0, display: 'flex', justifyContent: 'center', gap: 6, pointerEvents: 'none' }}>
                   {camDevs.map((_, i) => (
                     <span key={i} style={{ width: 7, height: 7, borderRadius: '50%', background: i === camIdx ? '#a78bfa' : 'rgba(255,255,255,0.35)', boxShadow: i === camIdx ? '0 0 6px #a78bfa' : 'none' }} />
