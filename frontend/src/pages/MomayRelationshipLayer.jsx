@@ -420,6 +420,43 @@ function getDonutColor(value) {
   return '#10b981'
 }
 
+// เกจหน้าปัดครึ่งวงกลม — % คนต่อพื้นที่ (realtime)
+function OccupancyGauge({ pct, count, density, live, size = 116 }) {
+  const hasPct = pct != null && Number.isFinite(Number(pct))
+  const p = Math.max(0, Math.min(1, (Number(pct) || 0) / 100))
+  const color = getDonutColor(hasPct ? pct : 0)
+  const R = 40, CX = 50, CY = 50
+  const ang = Math.PI * (1 - p)                       // 180°(ว่าง) → 0°(เต็ม)
+  const ex = (CX + R * Math.cos(ang)).toFixed(2)
+  const ey = (CY - R * Math.sin(ang)).toFixed(2)
+  const bg = `M ${CX - R} ${CY} A ${R} ${R} 0 0 0 ${CX + R} ${CY}`
+  const fg = `M ${CX - R} ${CY} A ${R} ${R} 0 0 0 ${ex} ${ey}`
+  return (
+    <div style={{
+      background: 'linear-gradient(135deg,#1a1a1a,#0d0d0d)',
+      border: `1.5px solid ${color}55`, borderRadius: 12, padding: '8px 12px 10px',
+      boxShadow: `0 0 16px ${color}22`, textAlign: 'center', width: size + 16,
+    }}>
+      <div style={{ color: '#8a7060', fontSize: 10, fontWeight: 700, marginBottom: 2 }}>คนต่อพื้นที่</div>
+      <svg viewBox="0 0 100 56" width={size} height={size * 0.56} style={{ display: 'block', margin: '0 auto' }}>
+        <path d={bg} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="9" strokeLinecap="round" />
+        {p > 0.005 && (
+          <path d={fg} fill="none" stroke={color} strokeWidth="9" strokeLinecap="round"
+            style={{ transition: 'all 0.5s ease', filter: `drop-shadow(0 0 4px ${color}88)` }} />
+        )}
+        <text x="50" y="46" textAnchor="middle" fontSize="22" fontWeight="800" fill={color}>
+          {hasPct ? Math.round(pct) : '--'}<tspan fontSize="11">%</tspan>
+        </text>
+      </svg>
+      <div style={{ color: '#8a7060', fontSize: 10, marginTop: 2 }}>
+        {live && count != null
+          ? `${count} คน${density != null ? ` · ${density.toFixed(2)} /ตร.ม.` : ''}`
+          : 'ยังไม่มีข้อมูลกล้อง'}
+      </div>
+    </div>
+  )
+}
+
 function DonutMetric({ color, value, Icon, size = 86 }) {
   const svgSize = 100
   const ringSize = size
@@ -2952,6 +2989,16 @@ function MomayRelationshipLayerInner() {
           </div>
 
           <div ref={viewerRef} className="relative" style={{ width: FLOOR_W, height: FIXED_H }}>
+            {selectedTrackRow && (
+              <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 45 }}>
+                <OccupancyGauge
+                  pct={selectedTrackRow.people}
+                  count={selectedTrackRow.count}
+                  density={selectedTrackRow.density}
+                  live={selectedTrackRow.live}
+                />
+              </div>
+            )}
             <div style={{ position: 'absolute', inset: 0 }}>
               {BUU_ROOMS.map((room, i) => {
                 const isSelected = i === selectedFloor
