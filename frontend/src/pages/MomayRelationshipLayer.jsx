@@ -1722,6 +1722,12 @@ function MomayStatusRow({ room, devices = [] }) {
   const cctvLastRef  = useRef(0)
   const touchXRef    = useRef(null)   // จุดเริ่มปัด (สลับกล้อง)
   const cctvCardRef  = useRef(null)   // กล่อง popup (สำหรับเต็มจอ)
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 640)
+  useEffect(() => {
+    const fn = () => setIsMobile(window.innerWidth < 640)
+    window.addEventListener('resize', fn)
+    return () => window.removeEventListener('resize', fn)
+  }, [])
 
   // ── Polling room state ────────────────────────────────────────────────────
   useEffect(() => {
@@ -2010,9 +2016,10 @@ function MomayStatusRow({ room, devices = [] }) {
   }
 
   function StatusText({ on, onLabel, offLabel, color }) {
-    if (on === null) return <span style={{ color: '#555', fontSize: 11, fontWeight: 700 }}>…</span>
+    const fs = isMobile ? 10 : 11
+    if (on === null) return <span style={{ color: '#555', fontSize: fs, fontWeight: 700 }}>…</span>
     const c = color || (on ? '#4ade80' : '#ef4444')
-    return <span style={{ color: c, fontSize: 11, fontWeight: 700 }}>{on ? onLabel : offLabel}</span>
+    return <span style={{ color: c, fontSize: fs, fontWeight: 700, whiteSpace: 'nowrap' }}>{on ? onLabel : offLabel}</span>
   }
 
   // Bulb SVG — ลอกจาก MomayBUUV.pm/index.html
@@ -2133,21 +2140,21 @@ function MomayStatusRow({ room, devices = [] }) {
 
   return (
     <>
-      <div style={{ display: 'flex', flexWrap: 'nowrap', gap: 8, width: '100%', overflowX: 'auto' }}>
+      <div style={{ display: 'flex', flexWrap: 'nowrap', gap: isMobile ? 6 : 8, width: '100%', overflowX: 'auto' }}>
         {items.map(({ key, label, on, onLabel, offLabel, iconColor, iconEl, onClick, statusColor, statusEl, pending }) => (
           <div key={key || label}
             onClick={pending ? undefined : (onClick || undefined)}
             style={{
               flex: '1 1 0',
-              minWidth: 120,   // การ์ดทุกใบอยู่แถวเดียว แชร์พื้นที่เท่ากัน (เลื่อนแนวนอนได้ถ้าจอแคบ)
+              minWidth: isMobile ? 92 : 120,   // มือถือย่อให้พอดี เลื่อนแนวนอนได้
               background: on === null
                 ? 'linear-gradient(135deg,#181818 0%,#0d0d0d 100%)'
                 : on
                   ? `linear-gradient(135deg,${iconColor}14 0%,#0d0d0d 100%)`
                   : 'linear-gradient(135deg,#1f0808 0%,#0d0d0d 100%)',
               border: `1.5px solid ${on === null ? 'rgba(255,255,255,0.08)' : on ? `${iconColor}55` : 'rgba(239,68,68,0.35)'}`,
-              borderRadius: 10, padding: '10px 14px',
-              display: 'flex', alignItems: 'center', gap: 12,
+              borderRadius: isMobile ? 9 : 10, padding: isMobile ? '7px 9px' : '10px 14px',
+              display: 'flex', alignItems: 'center', gap: isMobile ? 7 : 12,
               cursor: onClick ? 'pointer' : 'default',
               transition: 'border-color 0.25s, background 0.25s',
               boxShadow: on ? `0 0 10px ${iconColor}18` : 'none',
@@ -2156,13 +2163,14 @@ function MomayStatusRow({ room, devices = [] }) {
             onMouseLeave={e => { if (onClick) e.currentTarget.style.borderColor = on === null ? 'rgba(255,255,255,0.08)' : on ? `${iconColor}55` : 'rgba(239,68,68,0.35)' }}
           >
             <div style={{
-              flexShrink: 0, width: 46, height: 46, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              flexShrink: 0, width: isMobile ? 32 : 46, height: isMobile ? 32 : 46, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              transform: isMobile ? 'scale(0.72)' : 'none', transformOrigin: 'center',
               filter: statusColor ? 'none' : on === null ? 'grayscale(1) opacity(0.4)' : on ? `drop-shadow(0 0 6px ${iconColor}88)` : 'none',
             }}>
               {iconEl}
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
-              <div style={{ color: on === null ? '#555' : on ? '#d1d5db' : '#9ca3af', fontSize: 11, fontWeight: 600, letterSpacing: 0.3 }}>{label}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 2 : 3, minWidth: 0 }}>
+              <div style={{ color: on === null ? '#555' : on ? '#d1d5db' : '#9ca3af', fontSize: isMobile ? 10 : 11, fontWeight: 600, letterSpacing: 0.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                 {pending
                   ? <span style={{ color: '#FFB800', fontSize: 11, fontWeight: 700 }}>กำลังสั่ง…</span>
