@@ -82,6 +82,7 @@ function RoomForm({ initial, onSave, onCancel }) {
         </label>
         <Field label="รูปผัง (img)" value={r.img} onChange={v => set('img', v)} placeholder="/Floorplan/Floor4plan.png" />
         <Field label="heatmap (svg)" value={r.heatmap} onChange={v => set('heatmap', v)} placeholder="/Floorplan/HeatmapgridFloor4.svg" />
+        <Field label="พื้นที่จริง (ตร.ม.) — ใช้คำนวณ % คนต่อพื้นที่" type="number" value={r.area} onChange={v => set('area', v)} placeholder="เช่น 120" />
       </div>
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
         <button style={S.btn} onClick={() => onSave(r)}>บันทึก</button>
@@ -233,7 +234,7 @@ export default function Settings() {
         </div>
 
         {addingRoom && (
-          <RoomForm initial={{ roomId: '', label: '', shortLabel: '', order: rooms.length, kind: 'room', img: '', heatmap: '' }}
+          <RoomForm initial={{ roomId: '', label: '', shortLabel: '', order: rooms.length, kind: 'room', img: '', heatmap: '', area: 0 }}
             onSave={saveRoom} onCancel={() => setAddingRoom(false)} />
         )}
 

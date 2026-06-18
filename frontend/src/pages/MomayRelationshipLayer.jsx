@@ -400,6 +400,7 @@ function mapConfigRooms(apiRooms) {
       apiBase: (meter?.meta?.apiBase || BUILDING_API).replace(/\/+$/, ''),  // ตัด / ท้าย กัน double slash
       device: (meter?.meta?.source || 'pm_building').trim(),
       devices: r.devices || [],
+      area: Number(r.area) || 0,   // พื้นที่จริง (ตร.ม.) → คำนวณ % คนต่อพื้นที่
     }
   })
 }
@@ -2536,7 +2537,7 @@ function MomayRelationshipLayerInner() {
   // ── Heatmap จากจำนวนคนจริง (relay → gateway /api/camera-counts) ──────────
   // count ต่อกล้องของห้อง → ความเข้มทั้งชั้น (canvas รับ zone payload {A,B,C})
   // ไม่มีข้อมูล/กล้องเงียบ → null = ใช้ animation mock เดิม
-  const MAX_HEAT_PEOPLE = 15   // จำนวนคนที่ถือว่า "เต็ม" (สีเข้มสุด)
+  const SQM_PER_PERSON = 2.5   // ตร.ม./คน ที่ถือว่า "เต็ม" 100% — ปรับตามชนิดพื้นที่ได้
   const [camCounts, setCamCounts] = useState({})
   useEffect(() => {
     let alive = true
@@ -2551,11 +2552,23 @@ function MomayRelationshipLayerInner() {
     const id = setInterval(poll, 3000)
     return () => { alive = false; clearInterval(id) }
   }, [])
-  const floorApiData = BUU_ROOMS.map(room => {
+  // count จริง + พื้นที่จริง → { count, pct(%คนต่อพื้นที่), density(คน/ตร.ม.) } ; null = ไม่มีกล้อง/เงียบ
+  function roomOccupancy(room) {
     const camId = room?.devices?.find(d => d.category === 'camera')?.meta?.camId
     const c = camId != null ? camCounts[String(camId)] : null
     if (!c || c.stale) return null
-    const v = Math.max(0, Math.min(1, c.count / MAX_HEAT_PEOPLE))
+    const area = Number(room?.area) || 0
+    const capacity = area > 0 ? area / SQM_PER_PERSON : null
+    return {
+      count: c.count,
+      pct: capacity ? Math.min(100, Math.round((c.count / capacity) * 100)) : null,
+      density: area > 0 ? c.count / area : null,
+    }
+  }
+  const floorApiData = BUU_ROOMS.map(room => {
+    const occ = roomOccupancy(room)
+    if (!occ || occ.pct == null) return null     // ไม่มีพื้นที่/กล้อง → mock เดิม
+    const v = Math.max(0, Math.min(1, occ.pct / 100))
     return { A: v, B: v, C: v }
   })
   // ────────────────────────────────────────────────────────────────────────
@@ -2564,11 +2577,15 @@ function MomayRelationshipLayerInner() {
   const [loadedCount, setLoadedCount] = useState(0)
   const allLoaded = loadedCount >= BUU_ROOMS.length
   const trackRows = BUU_ROOMS.map(room => {
-    const people = FLOOR_TRACK_PRESET[room.id]?.people ?? 50
+    const occ = roomOccupancy(room)
+    const people = occ?.pct != null ? occ.pct : (FLOOR_TRACK_PRESET[room.id]?.people ?? 50)
     return {
       floorId: room.id,
       floorLabel: room.label,
-      people,
+      people,                              // = % occupancy (จริงถ้ามีกล้อง+พื้นที่, ไม่งั้น mock)
+      live: occ?.pct != null,
+      count: occ?.count ?? null,
+      density: occ?.density ?? null,
     }
   })
   const selectedFloorId = BUU_ROOMS[selectedFloor]?.id
@@ -2757,7 +2774,11 @@ function MomayRelationshipLayerInner() {
                   <div style={{ color: getDonutColor(selectedTrackRow.people), fontWeight: 800, fontSize: 14, letterSpacing: 0.4 }}>
                     {selectedTrackRow.floorLabel}
                   </div>
-                  <div style={{ color: '#8a7060', fontSize: 10 }}>การใช้งานพื้นที่</div>
+                  <div style={{ color: '#8a7060', fontSize: 10 }}>
+                    {selectedTrackRow.live
+                      ? `${selectedTrackRow.count} คน · ${selectedTrackRow.density != null ? selectedTrackRow.density.toFixed(2) + ' คน/ตร.ม.' : 'ตั้งพื้นที่ใน /settings'}`
+                      : 'การใช้งานพื้นที่'}
+                  </div>
                 </div>
               </div>
             )}

@@ -29,7 +29,7 @@ router.post('/', async (req, res) => {
     const exists = await Room.findOne({ roomId });
     if (exists) return res.status(409).json({ ok: false, error: 'roomId already exists' });
 
-    const allowed = ['roomId', 'label', 'shortLabel', 'order', 'kind', 'img', 'heatmap'];
+    const allowed = ['roomId', 'label', 'shortLabel', 'order', 'kind', 'img', 'heatmap', 'area'];
     const doc = {};
     for (const k of allowed) if (req.body[k] !== undefined) doc[k] = req.body[k];
 
@@ -43,7 +43,7 @@ router.post('/', async (req, res) => {
 // Update
 router.patch('/:roomId', async (req, res) => {
   try {
-    const allowed = ['label', 'shortLabel', 'order', 'kind', 'img', 'heatmap'];
+    const allowed = ['label', 'shortLabel', 'order', 'kind', 'img', 'heatmap', 'area'];
     const update = {};
     for (const k of allowed) if (req.body[k] !== undefined) update[k] = req.body[k];
     if (!Object.keys(update).length) return res.status(400).json({ ok: false, error: 'No fields to update' });
