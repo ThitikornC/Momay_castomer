@@ -21,7 +21,10 @@ import cv2
 import websockets
 from dotenv import load_dotenv
 
-load_dotenv()
+import paths
+from detector import PersonDetector
+
+load_dotenv(os.path.join(paths.data_dir(), ".env"))
 
 GATEWAY_URL  = os.getenv("GATEWAY_URL", "http://localhost:8002").rstrip("/")
 SERVER_URL   = os.getenv("SERVER_URL", "ws://localhost:3100/ws/relay")
@@ -32,6 +35,13 @@ DEF_HEIGHT   = int(os.getenv("FRAME_HEIGHT", "480"))
 DEF_FPS      = int(os.getenv("FPS", "15"))
 DEF_QUALITY  = int(os.getenv("JPEG_QUALITY", "40"))
 DEF_TRANSPORT = os.getenv("RTSP_TRANSPORT", "tcp").strip().lower()
+
+# ── Person detection (ฟรี ขายได้ — ssd|hog|none) ──
+DETECT_ENABLED = os.getenv("DETECT_ENABLED", "0").strip() in ("1", "true", "yes", "on")
+DETECT_BACKEND = os.getenv("DETECT_BACKEND", "ssd").strip().lower()
+DETECT_CONF    = float(os.getenv("DETECT_CONF", "0.5"))
+DETECT_EVERY_N = max(1, int(os.getenv("DETECT_EVERY_N", "3")))   # detect ทุกกี่เฟรม (ลด CPU)
+_detector = None   # สร้างครั้งเดียวใน manager() แล้วแชร์ทุกกล้อง
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("relay")
@@ -109,11 +119,18 @@ async def camera_task(cam):
             ws = await websockets.connect(ws_url, ping_interval=10, ping_timeout=5, max_size=2**20, close_timeout=3)
             logger.info(f"[{cam_id}] ✓ streaming")
             sent = skip = 0; log_t = time.time()
+            frame_i = 0; last_boxes = []
             while should_run and capture.running:
                 t0 = time.monotonic()
                 frame = capture.get_frame()
                 if frame is None:
                     await asyncio.sleep(0.005); continue
+                if _detector is not None:
+                    frame = frame.copy()                       # กันวาดทับเฟรมที่ capture แชร์อยู่
+                    frame_i += 1
+                    if frame_i % DETECT_EVERY_N == 0:          # detect ทุก N เฟรม (offload เข้า thread)
+                        last_boxes = await asyncio.to_thread(_detector.detect, frame)
+                    PersonDetector.draw(frame, last_boxes)
                 ok, jpeg = cv2.imencode(".jpg", frame, enc)
                 if not ok: continue
                 try:
@@ -164,10 +181,16 @@ def fetch_cameras():
 
 async def manager():
     """ดึงรายการกล้องเป็นระยะ → start/stop/restart task ตาม config ใน registry"""
+    global _detector
     tasks = {}   # camId → {task, sig}
     logger.info(f"=== CCTV relay (registry-driven) ===")
     logger.info(f"  Gateway: {GATEWAY_URL}/api/devices?category=camera")
     logger.info(f"  Server:  {SERVER_URL}")
+    if DETECT_ENABLED:
+        logger.info(f"  Detect:  ON (backend={DETECT_BACKEND} conf={DETECT_CONF} every={DETECT_EVERY_N})")
+        _detector = await asyncio.to_thread(PersonDetector, DETECT_BACKEND, DETECT_CONF)
+    else:
+        logger.info(f"  Detect:  OFF")
     while should_run:
         try:
             cams = await asyncio.to_thread(fetch_cameras)

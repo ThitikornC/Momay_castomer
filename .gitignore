@@ -16,6 +16,17 @@ api-gateway/.env
 frontend/.env
 frontend/.env.local
 
+# CCTV person-detection model binaries (auto-download ตอนรัน — ไม่ commit, เก็บแค่ .pbtxt)
+cctv/models/*.pb
+cctv/models/*.tar.gz
+cctv/models/_*.tmp
+
+# PyInstaller build outputs (สร้างใหม่ได้จาก build_exe.bat)
+cctv/build/
+cctv/dist/
+cctv/*.spec
+cctv/Output/
+
 # Build outputs & dependencies
 node_modules/
 frontend/dist/
