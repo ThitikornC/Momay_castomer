@@ -14,7 +14,7 @@ PrivilegesRequired=lowest
 OutputBaseFilename=MomayRelay-Setup
 Compression=lzma2
 SolidCompression=yes
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
 
 [Files]
@@ -29,8 +29,7 @@ Name: "desktopicon"; Description: "สร้างไอคอนบนเดส
 Name: "startup"; Description: "เปิดอัตโนมัติเมื่อเข้าใช้งาน Windows"; GroupDescription: "เริ่มอัตโนมัติ:"
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; \
-  ValueName: "MomayRelay"; ValueData: """{app}\MomayRelay.exe"""; Tasks: startup; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "MomayRelay"; ValueData: """{app}\MomayRelay.exe"""; Tasks: startup; Flags: uninsdeletevalue
 
 [Run]
 Filename: "{app}\MomayRelay.exe"; Description: "เปิด MomayBUU CCTV Relay ตอนนี้"; Flags: nowait postinstall skipifsilent

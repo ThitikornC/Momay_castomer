@@ -41,7 +41,20 @@ DETECT_ENABLED = os.getenv("DETECT_ENABLED", "0").strip() in ("1", "true", "yes"
 DETECT_BACKEND = os.getenv("DETECT_BACKEND", "ssd").strip().lower()
 DETECT_CONF    = float(os.getenv("DETECT_CONF", "0.5"))
 DETECT_EVERY_N = max(1, int(os.getenv("DETECT_EVERY_N", "3")))   # detect ทุกกี่เฟรม (ลด CPU)
+COUNT_POST_SEC = float(os.getenv("COUNT_POST_SEC", "2"))         # ส่ง count ขึ้น gateway ทุกกี่วิ
 _detector = None   # สร้างครั้งเดียวใน manager() แล้วแชร์ทุกกล้อง
+
+
+def _post_count(cam_id, count):
+    """ส่งจำนวนคนของกล้องขึ้น gateway (fire-and-forget, ห้าม raise)"""
+    try:
+        data = json.dumps({"camId": str(cam_id), "count": int(count)}).encode()
+        req = urllib.request.Request(
+            f"{GATEWAY_URL}/api/camera-count", data=data,
+            headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(req, timeout=5).read()
+    except Exception:
+        pass
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("relay")
@@ -119,7 +132,7 @@ async def camera_task(cam):
             ws = await websockets.connect(ws_url, ping_interval=10, ping_timeout=5, max_size=2**20, close_timeout=3)
             logger.info(f"[{cam_id}] ✓ streaming")
             sent = skip = 0; log_t = time.time()
-            frame_i = 0; last_boxes = []
+            frame_i = 0; last_boxes = []; last_post = 0.0
             while should_run and capture.running:
                 t0 = time.monotonic()
                 frame = capture.get_frame()
@@ -130,7 +143,10 @@ async def camera_task(cam):
                     frame_i += 1
                     if frame_i % DETECT_EVERY_N == 0:          # detect ทุก N เฟรม (offload เข้า thread)
                         last_boxes = await asyncio.to_thread(_detector.detect, frame)
-                    PersonDetector.draw(frame, last_boxes)
+                    count = PersonDetector.draw(frame, last_boxes)
+                    if time.time() - last_post >= COUNT_POST_SEC:   # ส่ง count ขึ้น gateway → heatmap
+                        last_post = time.time()
+                        asyncio.create_task(asyncio.to_thread(_post_count, cam_id, count))
                 ok, jpeg = cv2.imencode(".jpg", frame, enc)
                 if not ok: continue
                 try:

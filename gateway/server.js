@@ -17,6 +17,7 @@ app.use('/api/tasmota',  require('./routes/tasmota'));
 app.use('/api/tuya',     require('./routes/tuya'));
 app.use('/api/devices',  require('./routes/devices'));
 app.use('/api/rooms',    require('./routes/rooms'));
+app.use('/api',          require('./routes/cameraCount')); // /api/camera-count, /api/camera-counts (live → heatmap)
 app.use('/api',          require('./routes/bookings'));   // /api/bookings, /api/active-booking (ยุบจาก momaybuu)
 
 // Combined config: rooms + อุปกรณ์ของแต่ละห้อง (ให้ dashboard ดึงครั้งเดียว)

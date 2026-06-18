@@ -2533,13 +2533,31 @@ function MomayRelationshipLayerInner() {
     : '--'
   const trendUp = trendPct == null || trendPct >= 0
 
-  // ── Per-floor API data (null = use mock animation) ──────────────────────
-  // When real API is ready, replace null entries with Float32Array(cells.length)
-  // Example fetch:
-  //   const res = await fetch(`/api/heatmap/floor/${floorIdx}`)
-  //   const { values } = await res.json()  // values: number[] normalized 0..1
-  //   setFloorApiData(prev => { const n=[...prev]; n[floorIdx]=new Float32Array(values); return n })
-  const [floorApiData] = useState(() => Array(FLOORS.length).fill(null))
+  // ── Heatmap จากจำนวนคนจริง (relay → gateway /api/camera-counts) ──────────
+  // count ต่อกล้องของห้อง → ความเข้มทั้งชั้น (canvas รับ zone payload {A,B,C})
+  // ไม่มีข้อมูล/กล้องเงียบ → null = ใช้ animation mock เดิม
+  const MAX_HEAT_PEOPLE = 15   // จำนวนคนที่ถือว่า "เต็ม" (สีเข้มสุด)
+  const [camCounts, setCamCounts] = useState({})
+  useEffect(() => {
+    let alive = true
+    async function poll() {
+      try {
+        const r = await fetch(`${DEVICES_API}/api/camera-counts`)
+        const j = await r.json()
+        if (alive) setCamCounts(j.counts || {})
+      } catch { /* คงค่าเดิม */ }
+    }
+    poll()
+    const id = setInterval(poll, 3000)
+    return () => { alive = false; clearInterval(id) }
+  }, [])
+  const floorApiData = BUU_ROOMS.map(room => {
+    const camId = room?.devices?.find(d => d.category === 'camera')?.meta?.camId
+    const c = camId != null ? camCounts[String(camId)] : null
+    if (!c || c.stale) return null
+    const v = Math.max(0, Math.min(1, c.count / MAX_HEAT_PEOPLE))
+    return { A: v, B: v, C: v }
+  })
   // ────────────────────────────────────────────────────────────────────────
 
   // Track how many floor plan images have loaded → show skeleton until all ready
