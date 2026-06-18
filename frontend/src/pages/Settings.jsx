@@ -4,6 +4,8 @@ import { useToast } from '../components/Toast.jsx'
 const API = (import.meta.env.VITE_DEVICES_API || 'http://localhost:8002').replace(/\/$/, '')
 const CACHE_KEY = 'momay_config_cache'
 const CAM_BASE = (import.meta.env.VITE_GATEWAY_URL || '').replace(/\/$/, '')   // person-counter gateway (mjpeg)
+// cctv server (ws) — ใช้ gen wsUrl ของกล้องอัตโนมัติจาก camId
+const CCTV_WS_BASE = (import.meta.env.VITE_CCTV_WS_BASE || 'wss://cctv-production-c602.up.railway.app/ws/stream').replace(/\/$/, '')
 
 // สร้าง URL หน้า viewer กล้อง (เปิดเป็นลิงก์เดี่ยว/ฝังได้)
 function camViewerUrl(dev) {
@@ -126,7 +128,13 @@ function DeviceForm({ initial, roomId, onSave, onCancel }) {
           <Field label="remoteId" value={d.meta?.remoteId} onChange={v => setMeta('remoteId', v)} />
         </>}
         {cat === 'camera' && <>
-          <Field label="camId (id กล้อง — ใช้ทั้ง relay + viewer)" value={d.meta?.camId} onChange={v => setMeta('camId', v)} placeholder="เช่น 101" />
+          <Field label="camId (id กล้อง — ใช้ทั้ง relay + viewer)" value={d.meta?.camId} onChange={v => setD(p => {
+            const meta = { ...p.meta, camId: v }
+            // gen wsUrl อัตโนมัติจาก camId (ถ้ายังว่าง หรือเป็นค่า auto เดิม)
+            if ((p.meta?.streamKind || 'ws') === 'ws' && (!p.meta?.wsUrl || p.meta.wsUrl.startsWith(CCTV_WS_BASE)))
+              meta.wsUrl = v ? `${CCTV_WS_BASE}?cam=${encodeURIComponent(v)}` : ''
+            return { ...p, meta }
+          })} placeholder="เช่น 101" />
           <Field label="rtspUrl (ให้ relay ดึงภาพ — ไม่ต้อง hardcode)" value={d.meta?.rtspUrl} onChange={v => setMeta('rtspUrl', v)} placeholder="rtsp://user:pass@ip:554/..." />
           <label style={{ display: 'block' }}>
             <span style={S.label}>streamKind (วิธีดูฝั่งหน้าเว็บ)</span>
@@ -135,7 +143,7 @@ function DeviceForm({ initial, roomId, onSave, onCancel }) {
               <option value="mjpeg">mjpeg (api-gateway)</option>
             </select>
           </label>
-          <Field label="wsUrl (viewer ฝั่งเว็บ)" value={d.meta?.wsUrl} onChange={v => setMeta('wsUrl', v)} placeholder="wss://.../ws/stream?cam=101" />
+          <Field label="wsUrl (auto จาก camId — แก้เองได้)" value={d.meta?.wsUrl} onChange={v => setMeta('wsUrl', v)} placeholder="wss://.../ws/stream?cam=101" />
           <Field label="FPS (relay, ว่าง=15)" type="number" value={d.meta?.fps} onChange={v => setMeta('fps', v)} placeholder="15" />
           <Field label="JPEG quality (relay, ว่าง=40)" type="number" value={d.meta?.jpegQuality} onChange={v => setMeta('jpegQuality', v)} placeholder="40" />
           <label style={{ display: 'block' }}>
@@ -148,7 +156,13 @@ function DeviceForm({ initial, roomId, onSave, onCancel }) {
         </>}
       </div>
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        <button style={S.btn} onClick={() => onSave({ ...d, type: d.type || TYPE_BY_CATEGORY[cat] })}>บันทึก</button>
+        <button style={S.btn} onClick={() => {
+          const dd = { ...d, type: d.type || TYPE_BY_CATEGORY[cat] }
+          // กันลืม: กล้อง ws ที่มี camId แต่ wsUrl ว่าง → เติม auto ให้ตอนบันทึก
+          if (cat === 'camera' && (dd.meta?.streamKind || 'ws') === 'ws' && dd.meta?.camId && !dd.meta?.wsUrl)
+            dd.meta = { ...dd.meta, wsUrl: `${CCTV_WS_BASE}?cam=${encodeURIComponent(dd.meta.camId)}` }
+          onSave(dd)
+        }}>บันทึก</button>
         <button style={S.btnGhost} onClick={onCancel}>ยกเลิก</button>
       </div>
     </div>
