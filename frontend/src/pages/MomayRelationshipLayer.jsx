@@ -1652,7 +1652,8 @@ function MomayStatusRow({ room, devices = [] }) {
   const switchDev  = devices.find(d => d.category === 'switch')   // ตัวแรก (ใช้ใน AC popup/legacy)
   const switchDevs = devices.filter(d => d.category === 'switch') // ทั้งหมด (แสดงปุ่มแยกทุกตัว/โซน)
   const irDev     = devices.find(d => d.category === 'ir-remote')
-  const camDev    = devices.find(d => d.category === 'camera')
+  const camDevs   = devices.filter(d => d.category === 'camera')   // ทุกกล้องในห้อง (สลับดูใน popup ได้)
+  const camDev    = camDevs[0] || null
   const [bulb, setBulb]   = useState(null)
   const [switchStates, setSwitchStates] = useState({})           // deviceId → true|false|null(offline)
   const [switchPending, setSwitchPending] = useState({})         // deviceId → true (รอ MQTT ยืนยัน)
@@ -1670,6 +1671,7 @@ function MomayStatusRow({ room, devices = [] }) {
 
   // CCTV popup
   const [cctvOpen, setCctvOpen] = useState(false)
+  const [camIdx, setCamIdx] = useState(0)               // กล้องที่กำลังดูใน popup (ห้องมีหลายกล้อง)
   const [cctvStatus, setCctvStatus] = useState('idle')  // idle|connecting|live|offline
   const [camLive, setCamLive] = useState(null)          // health อิสระจาก popup (poll /cameras) — true|false|null
   const [cctvFps, setCctvFps] = useState('')
@@ -1679,6 +1681,7 @@ function MomayStatusRow({ room, devices = [] }) {
   const cctvTimerRef = useRef(null)
   const cctvStaleRef = useRef(null)
   const cctvLastRef  = useRef(0)
+  const touchXRef    = useRef(null)   // จุดเริ่มปัด (สลับกล้อง)
 
   // ── Polling room state ────────────────────────────────────────────────────
   useEffect(() => {
@@ -1865,10 +1868,14 @@ function MomayStatusRow({ room, devices = [] }) {
 
   // ── CCTV — ใช้ camera device จาก registry (mjpeg ผ่าน api-gateway / ws) ไม่งั้น default ──
   const CCTV_WS_DEFAULT = 'wss://momaybuu-production.up.railway.app/ws/stream'
-  const camMjpeg = (camDev?.meta?.streamKind === 'mjpeg' && camDev.meta.camId && CAM_BASE)
-    ? `${CAM_BASE}/stream/${encodeURIComponent(camDev.meta.camId)}`
+  const nCams = camDevs.length
+  const activeCam = camDevs[camIdx] || camDev
+  const nextCam = () => setCamIdx(i => (i + 1) % Math.max(1, nCams))
+  const prevCam = () => setCamIdx(i => (i - 1 + nCams) % Math.max(1, nCams))
+  const camMjpeg = (activeCam?.meta?.streamKind === 'mjpeg' && activeCam.meta.camId && CAM_BASE)
+    ? `${CAM_BASE}/stream/${encodeURIComponent(activeCam.meta.camId)}`
     : null
-  const camWs = camDev?.meta?.streamKind === 'ws' ? (camDev.meta.wsUrl || null) : null
+  const camWs = activeCam?.meta?.streamKind === 'ws' ? (activeCam.meta.wsUrl || null) : null
   function cctvConnect() {
     if (cctvWsRef.current || cctvImgRef.current?.dataset.mjpeg) return
     setCctvStatus('connecting')
@@ -1914,10 +1921,10 @@ function MomayStatusRow({ room, devices = [] }) {
   }
 
   useEffect(() => {
+    cctvDisconnect()                 // ปิดของเดิมก่อน (เผื่อสลับกล้อง) แล้วต่อใหม่
     if (cctvOpen) cctvConnect()
-    else cctvDisconnect()
     return () => cctvDisconnect()
-  }, [cctvOpen])
+  }, [cctvOpen, camIdx])
 
   // ── Health อิสระ: poll {cctvServer}/cameras ดู relay_connected ของ cam นี้ (ws เท่านั้น) ──
   // ทำให้การ์ด "กล้องวงจรปิด" โชว์ออนไลน์ได้โดยไม่ต้องเปิด popup. หยุด poll ตอน popup เปิด (ใช้ cctvStatus แทน)
@@ -2024,7 +2031,7 @@ function MomayStatusRow({ room, devices = [] }) {
       key: 'cctv',
       label: 'กล้องวงจรปิด', on: cctvOn, onLabel: 'ออนไลน์', offLabel: 'ออฟไลน์', iconColor: '#a89030',
       iconEl: cctvSvg,
-      onClick: () => setCctvOpen(true),
+      onClick: () => { setCamIdx(0); setCctvOpen(true) },
     },
     // ── Countdown — แสดงตลอด (อยู่หลังกล้อง ก่อน PM); --:--:-- เมื่อไม่มีจอง/ยังไม่เช็คอิน, เริ่มนับหลังคนจองเช็คอิน ──
     {
@@ -2181,7 +2188,10 @@ function MomayStatusRow({ room, devices = [] }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: cctvStatus === 'live' ? '#ff3b3b' : cctvStatus === 'connecting' ? '#ffaa00' : '#666', display: 'inline-block' }} />
                 <Camera size={14} color="#a78bfa" />
-                <span style={{ color: '#a78bfa', fontWeight: 700, fontSize: 13 }}>กล้องวงจรปิด</span>
+                <span style={{ color: '#a78bfa', fontWeight: 700, fontSize: 13 }}>
+                  {activeCam?.label || (activeCam?.meta?.camId ? `กล้อง ${activeCam.meta.camId}` : 'กล้องวงจรปิด')}
+                  {nCams > 1 && <span style={{ color: '#7c6aaa', fontWeight: 500, fontSize: 11, marginLeft: 6 }}>{camIdx + 1}/{nCams}</span>}
+                </span>
                 <span style={{ color: '#666', fontSize: 10 }}>— {cctvStatus === 'live' ? '● LIVE' : cctvStatus === 'connecting' ? 'กำลังเชื่อมต่อ…' : 'ไม่มีสัญญาณ'}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2190,7 +2200,14 @@ function MomayStatusRow({ room, devices = [] }) {
               </div>
             </div>
             {/* Video feed */}
-            <div style={{ position: 'relative', background: '#000', aspectRatio: '4/3' }}>
+            <div style={{ position: 'relative', background: '#000', aspectRatio: '4/3' }}
+              onTouchStart={e => { touchXRef.current = e.changedTouches[0].clientX }}
+              onTouchEnd={e => {
+                if (touchXRef.current == null || nCams < 2) return
+                const dx = e.changedTouches[0].clientX - touchXRef.current
+                if (dx <= -40) nextCam(); else if (dx >= 40) prevCam()
+                touchXRef.current = null
+              }}>
               <img ref={cctvImgRef} alt="CCTV" style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain' }} />
               {cctvStatus !== 'live' && (
                 <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, color: '#555', fontSize: 13 }}>
@@ -2198,6 +2215,17 @@ function MomayStatusRow({ room, devices = [] }) {
                   <span>{cctvStatus === 'connecting' ? 'กำลังเชื่อมต่อกล้อง…' : 'ไม่มีสัญญาณ'}</span>
                 </div>
               )}
+              {nCams > 1 && (<>
+                <button onClick={prevCam} aria-label="กล้องก่อนหน้า"
+                  style={{ position: 'absolute', top: '50%', left: 8, transform: 'translateY(-50%)', width: 34, height: 34, borderRadius: '50%', background: 'rgba(0,0,0,0.45)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', fontSize: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
+                <button onClick={nextCam} aria-label="กล้องถัดไป"
+                  style={{ position: 'absolute', top: '50%', right: 8, transform: 'translateY(-50%)', width: 34, height: 34, borderRadius: '50%', background: 'rgba(0,0,0,0.45)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', fontSize: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>›</button>
+                <div style={{ position: 'absolute', bottom: 8, left: 0, right: 0, display: 'flex', justifyContent: 'center', gap: 6, pointerEvents: 'none' }}>
+                  {camDevs.map((_, i) => (
+                    <span key={i} style={{ width: 7, height: 7, borderRadius: '50%', background: i === camIdx ? '#a78bfa' : 'rgba(255,255,255,0.35)', boxShadow: i === camIdx ? '0 0 6px #a78bfa' : 'none' }} />
+                  ))}
+                </div>
+              </>)}
             </div>
             {/* Footer */}
             <div style={{ padding: '8px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(167,139,250,0.15)' }}>
