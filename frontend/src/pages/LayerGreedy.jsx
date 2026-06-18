@@ -22,8 +22,18 @@ export default function LayerGreedy() {
   const [pulse, setPulse] = useState(true);
 
   // ── ข้อมูลจริง: กล้องจาก registry + จำนวนคนสด (ชุดเดียวกับ heatmap/เกจของ dashboard) ──
-  const [cams, setCams]     = useState([])   // [{ camId, label, capacity }]
-  const [counts, setCounts] = useState({})   // camId -> { count, stale }
+  const [cams, setCams]     = useState([])   // [{ camId, label, roomId }]
+  const [rooms, setRooms]   = useState([])   // [{ roomId, label }]
+  const [counts, setCounts] = useState({})   // camId -> { count, pct, stale }
+  // ห้องที่เลือก — ตามแปลนหน้า momaymodel ผ่าน localStorage ('' = ทุกห้อง)
+  const [selRoom, setSelRoom] = useState(() => localStorage.getItem('momay_room') || '')
+
+  useEffect(() => {
+    const read = () => setSelRoom(localStorage.getItem('momay_room') || '')
+    window.addEventListener('storage', read)        // ข้ามแท็บ (เปลี่ยนห้องบน momaymodel)
+    const id = setInterval(read, 1000)              // แท็บเดียวกัน
+    return () => { window.removeEventListener('storage', read); clearInterval(id) }
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -31,12 +41,14 @@ export default function LayerGreedy() {
       try {
         const r = await fetch(`${DEVICES_API}/api/config`)
         const j = await r.json()
-        const list = []
-        for (const room of (j.rooms || []))
+        const list = [], rs = []
+        for (const room of (j.rooms || [])) {
+          rs.push({ roomId: room.roomId, label: room.label || room.roomId })
           for (const d of (room.devices || []))
             if (d.category === 'camera' && d.meta?.camId)
-              list.push({ camId: String(d.meta.camId), label: d.label || `กล้อง ${d.meta.camId}` })
-        if (alive) setCams(list)
+              list.push({ camId: String(d.meta.camId), label: d.label || `กล้อง ${d.meta.camId}`, roomId: room.roomId })
+        }
+        if (alive) { setCams(list); setRooms(rs) }
       } catch { /* keep */ }
     }
     load()
@@ -63,8 +75,11 @@ export default function LayerGreedy() {
     return () => clearInterval(interval)
   }, [])
 
-  // รวม count + capacity → % ต่อกล้อง (capacity = "คนที่ถือว่าเต็มภาพ" จาก /settings)
-  const camRows = cams.map(c => {
+  // กรองตามห้องที่เลือก (ห้องนั้นไม่มีกล้อง → fallback แสดงทุกห้อง)
+  const inRoom = selRoom ? cams.filter(c => c.roomId === selRoom) : cams
+  const visibleCams = inRoom.length ? inRoom : cams
+  const selRoomLabel = rooms.find(r => r.roomId === selRoom)?.label || ''
+  const camRows = visibleCams.map(c => {
     const cc = counts[c.camId]
     const live = !!cc && !cc.stale
     const count = cc?.count ?? 0
@@ -123,6 +138,7 @@ export default function LayerGreedy() {
           <div className="min-w-0">
             <h1 className="text-base font-extrabold tracking-wider text-white flex flex-wrap items-baseline gap-1.5">
               <span className="whitespace-nowrap">LAYER 1: Real-Time</span>
+              {selRoomLabel && <span className="whitespace-nowrap text-[#10b981] text-sm font-bold">· {selRoomLabel}</span>}
             </h1>
             <p className="text-[10px] text-[#6fa39b] font-light mt-0.5">
               เลือกสิ่งที่ดีที่สุด ณ เวลาปัจจุบัน เพื่อการตอบสนองและแจ้งเตือนทันที

@@ -2578,14 +2578,29 @@ function MomayRelationshipLayerInner() {
     const id = setInterval(poll, 3000)
     return () => { alive = false; clearInterval(id) }
   }, [])
+  // เก็บห้องที่เลือก → Layer 1 (หน้าแยก) ตามได้ผ่าน localStorage (เหมือนไฟฟ้าตามห้อง)
+  useEffect(() => {
+    const id = BUU_ROOMS[selectedFloor]?.id
+    if (id) localStorage.setItem('momay_room', id)
+  }, [selectedFloor])
+
   // ขั้น 1: % จากกล้อง = พื้นที่ที่มีคน ÷ ภาพทั้งหมด (relay คำนวณส่งมาเป็น pct) → 0..100
+  // ห้องมีหลายกล้อง → รวมทุกกล้อง: % = เฉลี่ยทุกกล้อง, count = รวมทุกกล้อง
   // null = ไม่มีกล้อง/เงียบ/ไม่มี pct (จะโชว์ --% ไม่ใช่ mock)
   function roomOccupancy(room) {
-    const cam = room?.devices?.find(d => d.category === 'camera')
-    const camId = cam?.meta?.camId
-    const c = camId != null ? camCounts[String(camId)] : null
-    if (!c || c.stale || c.pct == null) return null
-    return { count: c.count, pct: c.pct }
+    const live = []
+    for (const cam of (room?.devices || [])) {
+      if (cam.category !== 'camera') continue
+      const id = cam?.meta?.camId
+      const c = id != null ? camCounts[String(id)] : null
+      if (c && !c.stale && c.pct != null) live.push(c)
+    }
+    if (!live.length) return null
+    return {
+      count: live.reduce((a, c) => a + c.count, 0),
+      pct: Math.round(live.reduce((a, c) => a + c.pct, 0) / live.length),
+      cams: live.length,
+    }
   }
   // ขั้น 2: เอา % ไประบายพื้นที่ heatmap (zone payload {A,B,C} = pct/100)
   const floorApiData = BUU_ROOMS.map(room => {
