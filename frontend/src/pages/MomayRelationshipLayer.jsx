@@ -2153,8 +2153,8 @@ function MomayStatusRow({ room, devices = [] }) {
                   ? `linear-gradient(135deg,${iconColor}14 0%,#0d0d0d 100%)`
                   : 'linear-gradient(135deg,#1f0808 0%,#0d0d0d 100%)',
               border: `1.5px solid ${on === null ? 'rgba(255,255,255,0.08)' : on ? `${iconColor}55` : 'rgba(239,68,68,0.35)'}`,
-              borderRadius: isMobile ? 9 : 10, padding: isMobile ? '7px 9px' : '10px 14px',
-              display: 'flex', alignItems: 'center', gap: isMobile ? 7 : 12,
+              borderRadius: isMobile ? 9 : 10, padding: isMobile ? '8px 6px' : '10px 14px',
+              display: 'flex', flexDirection: isMobile ? 'column' : 'row', alignItems: 'center', gap: isMobile ? 3 : 12,
               cursor: onClick ? 'pointer' : 'default',
               transition: 'border-color 0.25s, background 0.25s',
               boxShadow: on ? `0 0 10px ${iconColor}18` : 'none',
@@ -2163,15 +2163,15 @@ function MomayStatusRow({ room, devices = [] }) {
             onMouseLeave={e => { if (onClick) e.currentTarget.style.borderColor = on === null ? 'rgba(255,255,255,0.08)' : on ? `${iconColor}55` : 'rgba(239,68,68,0.35)' }}
           >
             <div style={{
-              flexShrink: 0, width: isMobile ? 32 : 46, height: isMobile ? 32 : 46, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              transform: isMobile ? 'scale(0.72)' : 'none', transformOrigin: 'center',
+              flexShrink: 0, width: isMobile ? 36 : 46, height: isMobile ? 36 : 46, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              transform: isMobile ? 'scale(0.82)' : 'none', transformOrigin: 'center',
               filter: statusColor ? 'none' : on === null ? 'grayscale(1) opacity(0.4)' : on ? `drop-shadow(0 0 6px ${iconColor}88)` : 'none',
             }}>
               {iconEl}
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 2 : 3, minWidth: 0 }}>
-              <div style={{ color: on === null ? '#555' : on ? '#d1d5db' : '#9ca3af', fontSize: isMobile ? 10 : 11, fontWeight: 600, letterSpacing: 0.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 1 : 3, minWidth: 0, ...(isMobile ? { alignItems: 'center', textAlign: 'center', width: '100%' } : {}) }}>
+              <div style={{ color: on === null ? '#555' : on ? '#d1d5db' : '#9ca3af', fontSize: isMobile ? 9.5 : 11, fontWeight: 600, letterSpacing: 0.2, lineHeight: 1.15, ...(isMobile ? {} : { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }) }}>{label}</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: isMobile ? 'center' : 'flex-start', gap: 5 }}>
                 {pending
                   ? <span style={{ color: '#FFB800', fontSize: 11, fontWeight: 700 }}>กำลังสั่ง…</span>
                   : statusEl
