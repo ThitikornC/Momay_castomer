@@ -1646,6 +1646,38 @@ function _pm25Level(v) {
   return               { label: 'อันตราย',          color: '#cc0000', bg: 'linear-gradient(135deg,#fffef8,#f5f0e5)' }
 }
 
+// 1 กล้อง/1 ws — ใช้ในมุมมอง grid (ต่อหลายตัวพร้อมกัน), คลิกเพื่อดูเดี่ยว
+function CctvTile({ wsUrl, label, onClick }) {
+  const imgRef = useRef(null)
+  const [live, setLive] = useState(false)
+  useEffect(() => {
+    if (!wsUrl) return
+    let ws, last = 0
+    try { ws = new WebSocket(wsUrl) } catch { return }
+    ws.binaryType = 'arraybuffer'
+    ws.onmessage = ev => {
+      if (typeof ev.data === 'string') return
+      last = Date.now()
+      const u = URL.createObjectURL(new Blob([ev.data], { type: 'image/jpeg' }))
+      if (imgRef.current) { const old = imgRef.current.src; imgRef.current.src = u; if (old?.startsWith('blob:')) URL.revokeObjectURL(old) }
+      setLive(true)
+    }
+    ws.onclose = () => setLive(false)
+    ws.onerror = () => setLive(false)
+    const stale = setInterval(() => { if (last && Date.now() - last > 4000) setLive(false) }, 1500)
+    return () => { clearInterval(stale); try { ws.onmessage = ws.onclose = ws.onerror = null; ws.close() } catch {} }
+  }, [wsUrl])
+  return (
+    <div onClick={onClick} style={{ position: 'relative', background: '#000', aspectRatio: '4/3', cursor: 'pointer', borderRadius: 6, overflow: 'hidden', border: '1px solid rgba(167,139,250,0.25)' }}>
+      <img ref={imgRef} alt={label} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      <div style={{ position: 'absolute', top: 4, left: 5, display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(0,0,0,0.45)', borderRadius: 5, padding: '2px 6px' }}>
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: live ? '#22c55e' : '#666' }} />
+        <span style={{ color: '#ddd', fontSize: 10, fontWeight: 700 }}>{label}</span>
+      </div>
+    </div>
+  )
+}
+
 function MomayStatusRow({ room, devices = [] }) {
   const ROOM = room || PRIMARY_ROOM
   // device จาก registry (settings) ของห้องนี้ — ถ้ามีจะใช้ผ่าน gateway, ไม่มีก็ fallback ทางเดิม (momaybuu)
@@ -1672,6 +1704,7 @@ function MomayStatusRow({ room, devices = [] }) {
   // CCTV popup
   const [cctvOpen, setCctvOpen] = useState(false)
   const [camIdx, setCamIdx] = useState(0)               // กล้องที่กำลังดูใน popup (ห้องมีหลายกล้อง)
+  const [cctvGrid, setCctvGrid] = useState(false)       // ดูแบบ grid (ทุกกล้องพร้อมกัน)
   const [cctvStatus, setCctvStatus] = useState('idle')  // idle|connecting|live|offline
   const [camLive, setCamLive] = useState(null)          // health อิสระจาก popup (poll /cameras) — true|false|null
   const [cctvFps, setCctvFps] = useState('')
@@ -1682,6 +1715,7 @@ function MomayStatusRow({ room, devices = [] }) {
   const cctvStaleRef = useRef(null)
   const cctvLastRef  = useRef(0)
   const touchXRef    = useRef(null)   // จุดเริ่มปัด (สลับกล้อง)
+  const cctvCardRef  = useRef(null)   // กล่อง popup (สำหรับเต็มจอ)
 
   // ── Polling room state ────────────────────────────────────────────────────
   useEffect(() => {
@@ -1876,6 +1910,13 @@ function MomayStatusRow({ room, devices = [] }) {
     ? `${CAM_BASE}/stream/${encodeURIComponent(activeCam.meta.camId)}`
     : null
   const camWs = (activeCam?.meta?.streamKind || 'ws') === 'ws' ? (activeCam?.meta?.wsUrl || null) : null   // ว่าง = ws
+  const camWsOf = dev => (dev?.meta?.streamKind || 'ws') === 'ws' ? (dev?.meta?.wsUrl || null) : null
+  function toggleFull() {
+    const el = cctvCardRef.current
+    if (!el) return
+    if (document.fullscreenElement) document.exitFullscreen?.()
+    else el.requestFullscreen?.()
+  }
   function cctvConnect() {
     if (cctvWsRef.current || cctvImgRef.current?.dataset.mjpeg) return
     setCctvStatus('connecting')
@@ -1898,6 +1939,7 @@ function MomayStatusRow({ room, devices = [] }) {
       cctvStaleRef.current = setInterval(() => { if (cctvLastRef.current > 0 && Date.now() - cctvLastRef.current > 3000) setCctvStatus('offline') }, 1500)
     }
     ws.onmessage = ev => {
+      if (cctvWsRef.current !== ws) return   // ws เก่า (สลับกล้องแล้ว) → ทิ้งเฟรม กันภาพซ้อน
       if (typeof ev.data === 'string') { if (ev.data === 'relay_offline') setCctvStatus('offline'); return }
       cctvLastRef.current = Date.now()
       const blob = new Blob([ev.data], { type: 'image/jpeg' })
@@ -1906,12 +1948,17 @@ function MomayStatusRow({ room, devices = [] }) {
       cctvFpsRef.current++
       setCctvStatus('live')
     }
-    ws.onclose = () => { cctvWsRef.current = null; clearInterval(cctvTimerRef.current); clearInterval(cctvStaleRef.current); setCctvStatus('offline'); setCctvFps('') }
+    ws.onclose = () => { if (cctvWsRef.current !== ws) return; cctvWsRef.current = null; clearInterval(cctvTimerRef.current); clearInterval(cctvStaleRef.current); setCctvStatus('offline'); setCctvFps('') }
     ws.onerror = () => setCctvStatus('offline')
   }
 
   function cctvDisconnect() {
-    if (cctvWsRef.current) { cctvWsRef.current.close(); cctvWsRef.current = null }
+    const ws = cctvWsRef.current
+    if (ws) {
+      ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null   // กัน handler เก่ายิงหลังปิด (ภาพซ้อน)
+      try { ws.close() } catch {}
+      cctvWsRef.current = null
+    }
     if (cctvImgRef.current?.dataset.mjpeg) {
       cctvImgRef.current.onload = null; cctvImgRef.current.onerror = null
       cctvImgRef.current.src = ''; delete cctvImgRef.current.dataset.mjpeg
@@ -1922,9 +1969,9 @@ function MomayStatusRow({ room, devices = [] }) {
 
   useEffect(() => {
     cctvDisconnect()                 // ปิดของเดิมก่อน (เผื่อสลับกล้อง) แล้วต่อใหม่
-    if (cctvOpen) cctvConnect()
+    if (cctvOpen && !cctvGrid) cctvConnect()   // grid ใช้ ws ของตัวเอง (CctvTile) ต่อหลายตัว
     return () => cctvDisconnect()
-  }, [cctvOpen, camIdx])
+  }, [cctvOpen, camIdx, cctvGrid])
 
   // ── Health อิสระ: poll {cctvServer}/cameras ดู relay_connected ของ cam นี้ (ws เท่านั้น) ──
   // ทำให้การ์ด "กล้องวงจรปิด" โชว์ออนไลน์ได้โดยไม่ต้องเปิด popup. หยุด poll ตอน popup เปิด (ใช้ cctvStatus แทน)
@@ -2031,7 +2078,7 @@ function MomayStatusRow({ room, devices = [] }) {
       key: 'cctv',
       label: 'กล้องวงจรปิด', on: cctvOn, onLabel: 'ออนไลน์', offLabel: 'ออฟไลน์', iconColor: '#a89030',
       iconEl: cctvSvg,
-      onClick: () => { setCamIdx(0); setCctvOpen(true) },
+      onClick: () => { setCamIdx(0); setCctvGrid(false); setCctvOpen(true) },
     },
     // ── Countdown — แสดงตลอด (อยู่หลังกล้อง ก่อน PM); --:--:-- เมื่อไม่มีจอง/ยังไม่เช็คอิน, เริ่มนับหลังคนจองเช็คอิน ──
     {
@@ -2182,24 +2229,43 @@ function MomayStatusRow({ room, devices = [] }) {
       {cctvOpen && (
         <div onClick={e => { if (e.target === e.currentTarget) setCctvOpen(false) }}
           style={{ position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#0a0a0a', border: '1.5px solid rgba(167,139,250,0.4)', borderRadius: 14, overflow: 'hidden', width: 440, maxWidth: '94vw', boxShadow: '0 0 40px rgba(167,139,250,0.15)' }}>
+          <div ref={cctvCardRef} style={{ background: '#0a0a0a', border: '1.5px solid rgba(167,139,250,0.4)', borderRadius: 14, overflow: 'hidden', width: cctvGrid ? 760 : 440, maxWidth: '94vw', boxShadow: '0 0 40px rgba(167,139,250,0.15)' }}>
             {/* Header */}
             <div style={{ background: 'linear-gradient(135deg, rgba(167,139,250,0.2), rgba(167,139,250,0.08))', padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(167,139,250,0.2)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: cctvStatus === 'live' ? '#ff3b3b' : cctvStatus === 'connecting' ? '#ffaa00' : '#666', display: 'inline-block' }} />
                 <Camera size={14} color="#a78bfa" />
-                <span style={{ color: '#a78bfa', fontWeight: 700, fontSize: 13 }}>
-                  {activeCam?.label || (activeCam?.meta?.camId ? `กล้อง ${activeCam.meta.camId}` : 'กล้องวงจรปิด')}
-                  {nCams > 1 && <span style={{ color: '#7c6aaa', fontWeight: 500, fontSize: 11, marginLeft: 6 }}>{camIdx + 1}/{nCams}</span>}
-                </span>
-                <span style={{ color: '#666', fontSize: 10 }}>— {cctvStatus === 'live' ? '● LIVE' : cctvStatus === 'connecting' ? 'กำลังเชื่อมต่อ…' : 'ไม่มีสัญญาณ'}</span>
+                {cctvGrid ? (
+                  <span style={{ color: '#a78bfa', fontWeight: 700, fontSize: 13 }}>ทุกกล้อง ({nCams})</span>
+                ) : (<>
+                  <span style={{ color: '#a78bfa', fontWeight: 700, fontSize: 13 }}>
+                    {activeCam?.label || (activeCam?.meta?.camId ? `กล้อง ${activeCam.meta.camId}` : 'กล้องวงจรปิด')}
+                    {nCams > 1 && <span style={{ color: '#7c6aaa', fontWeight: 500, fontSize: 11, marginLeft: 6 }}>{camIdx + 1}/{nCams}</span>}
+                  </span>
+                  <span style={{ color: '#666', fontSize: 10 }}>— {cctvStatus === 'live' ? '● LIVE' : cctvStatus === 'connecting' ? 'กำลังเชื่อมต่อ…' : 'ไม่มีสัญญาณ'}</span>
+                </>)}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {cctvFps && <span style={{ color: '#555', fontSize: 10 }}>{cctvFps}</span>}
+                {cctvFps && !cctvGrid && <span style={{ color: '#555', fontSize: 10 }}>{cctvFps}</span>}
+                {cctvGrid && (<>
+                  <button onClick={() => setCctvGrid(false)} title="ดูเดี่ยว"
+                    style={{ background: 'rgba(167,139,250,0.25)', border: '1px solid rgba(167,139,250,0.3)', borderRadius: 7, width: 28, height: 26, color: '#cbb6ff', fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>▦</button>
+                  <button onClick={toggleFull} title="เต็มจอ"
+                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 7, width: 28, height: 26, color: '#aaa', fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>⛶</button>
+                </>)}
                 <button onClick={() => setCctvOpen(false)} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '50%', width: 26, height: 26, color: '#aaa', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
               </div>
             </div>
             {/* Video feed */}
+            {cctvGrid ? (
+              <div style={{ background: '#000', padding: 8, display: 'grid', gap: 8, gridTemplateColumns: nCams <= 1 ? '1fr' : nCams <= 4 ? '1fr 1fr' : '1fr 1fr 1fr' }}>
+                {camDevs.map((d, i) => (
+                  <CctvTile key={d.deviceId || i} wsUrl={camWsOf(d)}
+                    label={d.label || (d.meta?.camId ? `กล้อง ${d.meta.camId}` : `กล้อง ${i + 1}`)}
+                    onClick={() => { setCamIdx(i); setCctvGrid(false) }} />
+                ))}
+              </div>
+            ) : (
             <div style={{ position: 'relative', background: '#000', aspectRatio: '4/3' }}
               onTouchStart={e => { touchXRef.current = e.changedTouches[0].clientX }}
               onTouchEnd={e => {
@@ -2226,7 +2292,17 @@ function MomayStatusRow({ room, devices = [] }) {
                   ))}
                 </div>
               </>)}
+              {/* ปุ่มมุมขวาล่าง: grid + เต็มจอ */}
+              <div style={{ position: 'absolute', bottom: 8, right: 8, display: 'flex', gap: 6 }}>
+                {nCams > 1 && (
+                  <button onClick={() => setCctvGrid(true)} title="ดูทุกกล้อง (grid)"
+                    style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>▦</button>
+                )}
+                <button onClick={toggleFull} title="เต็มจอ"
+                  style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>⛶</button>
+              </div>
             </div>
+            )}
             {/* Footer */}
             <div style={{ padding: '8px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(167,139,250,0.15)' }}>
               <span style={{ color: '#555', fontSize: 10 }}>สำนักหอสมุด ม.บูรพา</span>
