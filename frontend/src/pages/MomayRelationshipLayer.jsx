@@ -1875,7 +1875,7 @@ function MomayStatusRow({ room, devices = [] }) {
   const camMjpeg = (activeCam?.meta?.streamKind === 'mjpeg' && activeCam.meta.camId && CAM_BASE)
     ? `${CAM_BASE}/stream/${encodeURIComponent(activeCam.meta.camId)}`
     : null
-  const camWs = activeCam?.meta?.streamKind === 'ws' ? (activeCam.meta.wsUrl || null) : null
+  const camWs = (activeCam?.meta?.streamKind || 'ws') === 'ws' ? (activeCam?.meta?.wsUrl || null) : null   // ว่าง = ws
   function cctvConnect() {
     if (cctvWsRef.current || cctvImgRef.current?.dataset.mjpeg) return
     setCctvStatus('connecting')

@@ -15,7 +15,7 @@ function camViewerUrl(dev) {
   if (m.streamKind === 'mjpeg' && m.camId) {
     return `${origin}/cam?kind=mjpeg&base=${encodeURIComponent(CAM_BASE)}&cam=${encodeURIComponent(m.camId)}&label=${label}`
   }
-  if (m.streamKind === 'ws' && m.wsUrl) {
+  if ((m.streamKind || 'ws') === 'ws' && m.wsUrl) {   // ว่าง = ws (default)
     return `${origin}/cam?kind=ws&url=${encodeURIComponent(m.wsUrl)}&label=${label}`
   }
   return null
@@ -158,9 +158,14 @@ function DeviceForm({ initial, roomId, onSave, onCancel }) {
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
         <button style={S.btn} onClick={() => {
           const dd = { ...d, type: d.type || TYPE_BY_CATEGORY[cat] }
-          // กันลืม: กล้อง ws ที่มี camId แต่ wsUrl ว่าง → เติม auto ให้ตอนบันทึก
-          if (cat === 'camera' && (dd.meta?.streamKind || 'ws') === 'ws' && dd.meta?.camId && !dd.meta?.wsUrl)
-            dd.meta = { ...dd.meta, wsUrl: `${CCTV_WS_BASE}?cam=${encodeURIComponent(dd.meta.camId)}` }
+          if (cat === 'camera') {
+            const meta = { ...dd.meta }
+            if (!meta.streamKind) meta.streamKind = 'ws'                  // default ws (กันค่าว่าง)
+            // กันลืม: กล้อง ws ที่มี camId แต่ wsUrl ว่าง → เติม auto ให้ตอนบันทึก
+            if (meta.streamKind === 'ws' && meta.camId && !meta.wsUrl)
+              meta.wsUrl = `${CCTV_WS_BASE}?cam=${encodeURIComponent(meta.camId)}`
+            dd.meta = meta
+          }
           onSave(dd)
         }}>บันทึก</button>
         <button style={S.btnGhost} onClick={onCancel}>ยกเลิก</button>
