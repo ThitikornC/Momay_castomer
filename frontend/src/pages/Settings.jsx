@@ -82,7 +82,6 @@ function RoomForm({ initial, onSave, onCancel }) {
         </label>
         <Field label="รูปผัง (img)" value={r.img} onChange={v => set('img', v)} placeholder="/Floorplan/Floor4plan.png" />
         <Field label="heatmap (svg)" value={r.heatmap} onChange={v => set('heatmap', v)} placeholder="/Floorplan/HeatmapgridFloor4.svg" />
-        <Field label="พื้นที่จริง (ตร.ม.) — ใช้คำนวณ % คนต่อพื้นที่" type="number" value={r.area} onChange={v => set('area', v)} placeholder="เช่น 120" />
       </div>
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
         <button style={S.btn} onClick={() => onSave(r)}>บันทึก</button>
@@ -139,6 +138,14 @@ function DeviceForm({ initial, roomId, onSave, onCancel }) {
           <Field label="wsUrl (viewer ฝั่งเว็บ)" value={d.meta?.wsUrl} onChange={v => setMeta('wsUrl', v)} placeholder="wss://.../ws/stream?cam=101" />
           <Field label="FPS (relay, ว่าง=15)" type="number" value={d.meta?.fps} onChange={v => setMeta('fps', v)} placeholder="15" />
           <Field label="JPEG quality (relay, ว่าง=40)" type="number" value={d.meta?.jpegQuality} onChange={v => setMeta('jpegQuality', v)} placeholder="40" />
+          <label style={{ display: 'block' }}>
+            <span style={S.label}>ตรวจจับคน (นับ → heatmap/เกจ)</span>
+            <select style={S.input} value={d.meta?.detect ? '1' : '0'} onChange={e => setMeta('detect', e.target.value === '1')}>
+              <option value="0">ปิด</option>
+              <option value="1">เปิด</option>
+            </select>
+          </label>
+          <Field label="คนที่ถือว่าเต็มภาพ (=100%)" type="number" value={d.meta?.capacity} onChange={v => setMeta('capacity', v)} placeholder="เช่น 20" />
         </>}
       </div>
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
@@ -234,7 +241,7 @@ export default function Settings() {
         </div>
 
         {addingRoom && (
-          <RoomForm initial={{ roomId: '', label: '', shortLabel: '', order: rooms.length, kind: 'room', img: '', heatmap: '', area: 0 }}
+          <RoomForm initial={{ roomId: '', label: '', shortLabel: '', order: rooms.length, kind: 'room', img: '', heatmap: '' }}
             onSave={saveRoom} onCancel={() => setAddingRoom(false)} />
         )}
 

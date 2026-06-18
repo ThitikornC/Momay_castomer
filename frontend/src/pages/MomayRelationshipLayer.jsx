@@ -400,7 +400,6 @@ function mapConfigRooms(apiRooms) {
       apiBase: (meter?.meta?.apiBase || BUILDING_API).replace(/\/+$/, ''),  // ตัด / ท้าย กัน double slash
       device: (meter?.meta?.source || 'pm_building').trim(),
       devices: r.devices || [],
-      area: Number(r.area) || 0,   // พื้นที่จริง (ตร.ม.) → คำนวณ % คนต่อพื้นที่
     }
   })
 }
@@ -420,43 +419,6 @@ function getDonutColor(value) {
   return '#10b981'
 }
 
-// เกจหน้าปัดครึ่งวงกลม — % คนต่อพื้นที่ (realtime)
-function OccupancyGauge({ pct, count, density, live, size = 116 }) {
-  const hasPct = pct != null && Number.isFinite(Number(pct))
-  const p = Math.max(0, Math.min(1, (Number(pct) || 0) / 100))
-  const color = getDonutColor(hasPct ? pct : 0)
-  const R = 40, CX = 50, CY = 50
-  const ang = Math.PI * (1 - p)                       // 180°(ว่าง) → 0°(เต็ม)
-  const ex = (CX + R * Math.cos(ang)).toFixed(2)
-  const ey = (CY - R * Math.sin(ang)).toFixed(2)
-  const bg = `M ${CX - R} ${CY} A ${R} ${R} 0 0 0 ${CX + R} ${CY}`
-  const fg = `M ${CX - R} ${CY} A ${R} ${R} 0 0 0 ${ex} ${ey}`
-  return (
-    <div style={{
-      background: 'linear-gradient(135deg,#1a1a1a,#0d0d0d)',
-      border: `1.5px solid ${color}55`, borderRadius: 12, padding: '8px 12px 10px',
-      boxShadow: `0 0 16px ${color}22`, textAlign: 'center', width: size + 16,
-    }}>
-      <div style={{ color: '#8a7060', fontSize: 10, fontWeight: 700, marginBottom: 2 }}>คนต่อพื้นที่</div>
-      <svg viewBox="0 0 100 56" width={size} height={size * 0.56} style={{ display: 'block', margin: '0 auto' }}>
-        <path d={bg} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="9" strokeLinecap="round" />
-        {p > 0.005 && (
-          <path d={fg} fill="none" stroke={color} strokeWidth="9" strokeLinecap="round"
-            style={{ transition: 'all 0.5s ease', filter: `drop-shadow(0 0 4px ${color}88)` }} />
-        )}
-        <text x="50" y="46" textAnchor="middle" fontSize="22" fontWeight="800" fill={color}>
-          {hasPct ? Math.round(pct) : '--'}<tspan fontSize="11">%</tspan>
-        </text>
-      </svg>
-      <div style={{ color: '#8a7060', fontSize: 10, marginTop: 2 }}>
-        {live && count != null
-          ? `${count} คน${density != null ? ` · ${density.toFixed(2)} /ตร.ม.` : ''}`
-          : 'ยังไม่มีข้อมูลกล้อง'}
-      </div>
-    </div>
-  )
-}
-
 function DonutMetric({ color, value, Icon, size = 86 }) {
   const svgSize = 100
   const ringSize = size
@@ -474,9 +436,9 @@ function DonutMetric({ color, value, Icon, size = 86 }) {
         <circle cx="50" cy="50" r="48" fill="#051715" className="transition-colors duration-300" />
         <g transform="rotate(-90 50 50)">
           <circle cx="50" cy="50" r="36" fill="none" stroke={color} strokeWidth="7" strokeDasharray="52.55 173.64" strokeDashoffset="0" />
-          <circle cx="50" cy="50" r="36" fill="none" stroke={color} strokeWidth="7" strokeDasharray="52.55 173.64" strokeDashoffset="-56.55" opacity={value >= 25 ? 1 : 0.25} />
-          <circle cx="50" cy="50" r="36" fill="none" stroke={color} strokeWidth="7" strokeDasharray="52.55 173.64" strokeDashoffset="-113.1" opacity={value >= 50 ? 1 : 0.25} />
-          <circle cx="50" cy="50" r="36" fill="none" stroke={color} strokeWidth="7" strokeDasharray="52.55 173.64" strokeDashoffset="-169.65" opacity={value >= 75 ? 1 : 0.25} />
+          <circle cx="50" cy="50" r="36" fill="none" stroke={color} strokeWidth="7" strokeDasharray="52.55 173.64" strokeDashoffset="-56.55" opacity={(value ?? 0) >= 25 ? 1 : 0.25} />
+          <circle cx="50" cy="50" r="36" fill="none" stroke={color} strokeWidth="7" strokeDasharray="52.55 173.64" strokeDashoffset="-113.1" opacity={(value ?? 0) >= 50 ? 1 : 0.25} />
+          <circle cx="50" cy="50" r="36" fill="none" stroke={color} strokeWidth="7" strokeDasharray="52.55 173.64" strokeDashoffset="-169.65" opacity={(value ?? 0) >= 75 ? 1 : 0.25} />
         </g>
       </svg>
       <div
@@ -2574,7 +2536,6 @@ function MomayRelationshipLayerInner() {
   // ── Heatmap จากจำนวนคนจริง (relay → gateway /api/camera-counts) ──────────
   // count ต่อกล้องของห้อง → ความเข้มทั้งชั้น (canvas รับ zone payload {A,B,C})
   // ไม่มีข้อมูล/กล้องเงียบ → null = ใช้ animation mock เดิม
-  const SQM_PER_PERSON = 2.5   // ตร.ม./คน ที่ถือว่า "เต็ม" 100% — ปรับตามชนิดพื้นที่ได้
   const [camCounts, setCamCounts] = useState({})
   useEffect(() => {
     let alive = true
@@ -2589,22 +2550,20 @@ function MomayRelationshipLayerInner() {
     const id = setInterval(poll, 3000)
     return () => { alive = false; clearInterval(id) }
   }, [])
-  // count จริง + พื้นที่จริง → { count, pct(%คนต่อพื้นที่), density(คน/ตร.ม.) } ; null = ไม่มีกล้อง/เงียบ
+  // ขั้น 1: % จากกล้อง = count ÷ "คนที่ถือว่าเต็มภาพ" (meta.capacity ราย-กล้อง) → 0..100
+  // null = ไม่มีกล้อง/เงียบ/ยังไม่ตั้ง capacity (จะโชว์ --% ไม่ใช่ mock)
   function roomOccupancy(room) {
-    const camId = room?.devices?.find(d => d.category === 'camera')?.meta?.camId
+    const cam = room?.devices?.find(d => d.category === 'camera')
+    const camId = cam?.meta?.camId
+    const cap = Number(cam?.meta?.capacity) || 0
     const c = camId != null ? camCounts[String(camId)] : null
-    if (!c || c.stale) return null
-    const area = Number(room?.area) || 0
-    const capacity = area > 0 ? area / SQM_PER_PERSON : null
-    return {
-      count: c.count,
-      pct: capacity ? Math.min(100, Math.round((c.count / capacity) * 100)) : null,
-      density: area > 0 ? c.count / area : null,
-    }
+    if (!c || c.stale || cap <= 0) return null
+    return { count: c.count, capacity: cap, pct: Math.min(100, Math.round((c.count / cap) * 100)) }
   }
+  // ขั้น 2: เอา % ไประบายพื้นที่ heatmap (zone payload {A,B,C} = pct/100)
   const floorApiData = BUU_ROOMS.map(room => {
     const occ = roomOccupancy(room)
-    if (!occ || occ.pct == null) return null     // ไม่มีพื้นที่/กล้อง → mock เดิม
+    if (!occ) return null
     const v = Math.max(0, Math.min(1, occ.pct / 100))
     return { A: v, B: v, C: v }
   })
@@ -2615,19 +2574,18 @@ function MomayRelationshipLayerInner() {
   const allLoaded = loadedCount >= BUU_ROOMS.length
   const trackRows = BUU_ROOMS.map(room => {
     const occ = roomOccupancy(room)
-    const people = occ?.pct != null ? occ.pct : (FLOOR_TRACK_PRESET[room.id]?.people ?? 50)
     return {
       floorId: room.id,
       floorLabel: room.label,
-      people,                              // = % occupancy (จริงถ้ามีกล้อง+พื้นที่, ไม่งั้น mock)
-      live: occ?.pct != null,
+      people: occ?.pct ?? null,            // % occupancy จริง ; null = ไม่มีข้อมูล → โชว์ --%
+      live: !!occ,
       count: occ?.count ?? null,
-      density: occ?.density ?? null,
+      capacity: occ?.capacity ?? null,
     }
   })
   const selectedFloorId = BUU_ROOMS[selectedFloor]?.id
   const selectedTrackRow = trackRows.find(row => row.floorId === selectedFloorId) ?? null
-  const totalPeople = Math.ceil(trackRows.reduce((sum, row) => sum + row.people, 0) / Math.max(trackRows.length, 1))
+  const totalPeople = Math.ceil(trackRows.reduce((sum, row) => sum + (row.people || 0), 0) / Math.max(trackRows.length, 1))
   const stackedTracks = trackRows.filter(row => row.floorId !== 0)
 
   const [winW, setWinW] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1280))
@@ -2813,8 +2771,8 @@ function MomayRelationshipLayerInner() {
                   </div>
                   <div style={{ color: '#8a7060', fontSize: 10 }}>
                     {selectedTrackRow.live
-                      ? `${selectedTrackRow.count} คน · ${selectedTrackRow.density != null ? selectedTrackRow.density.toFixed(2) + ' คน/ตร.ม.' : 'ตั้งพื้นที่ใน /settings'}`
-                      : 'การใช้งานพื้นที่'}
+                      ? `${selectedTrackRow.count}/${selectedTrackRow.capacity} คน`
+                      : 'ยังไม่มีข้อมูลกล้อง'}
                   </div>
                 </div>
               </div>
@@ -2989,16 +2947,6 @@ function MomayRelationshipLayerInner() {
           </div>
 
           <div ref={viewerRef} className="relative" style={{ width: FLOOR_W, height: FIXED_H }}>
-            {selectedTrackRow && (
-              <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 45 }}>
-                <OccupancyGauge
-                  pct={selectedTrackRow.people}
-                  count={selectedTrackRow.count}
-                  density={selectedTrackRow.density}
-                  live={selectedTrackRow.live}
-                />
-              </div>
-            )}
             <div style={{ position: 'absolute', inset: 0 }}>
               {BUU_ROOMS.map((room, i) => {
                 const isSelected = i === selectedFloor
@@ -3071,7 +3019,7 @@ function MomayRelationshipLayerInner() {
               <div>
                 <div style={{ color: getDonutColor(selectedTrackRow.people), fontWeight: 800, fontSize: 14 }}>{selectedTrackRow.floorLabel}</div>
                 <div style={{ color: '#8a7060', fontSize: 10 }}>การใช้งานพื้นที่</div>
-                <div style={{ color: '#d1d5db', fontSize: 10 }}>{selectedTrackRow.people}% Occupied</div>
+                <div style={{ color: '#d1d5db', fontSize: 10 }}>{selectedTrackRow.people == null ? '--' : selectedTrackRow.people}% Occupied</div>
               </div>
             </div>
           )}

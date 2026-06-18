@@ -8,7 +8,6 @@ const roomSchema = new Schema({
   kind:       { type: String, enum: ['room', 'building'], default: 'room' }, // building = การ์ดรวมทั้งอาคาร
   img:        { type: String, default: '' },                  // path รูปผัง เช่น /Floorplan/Floor1plan.png
   heatmap:    { type: String, default: '' },                  // path heatmap svg
-  area:       { type: Number, default: 0 },                   // พื้นที่จริง (ตร.ม.) → ใช้คำนวณความหนาแน่น/% occupancy
 }, { timestamps: true });
 
 module.exports = model('GwRoom', roomSchema, 'gw_rooms');

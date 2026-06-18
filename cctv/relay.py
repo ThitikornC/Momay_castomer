@@ -42,7 +42,26 @@ DETECT_BACKEND = os.getenv("DETECT_BACKEND", "ssd").strip().lower()
 DETECT_CONF    = float(os.getenv("DETECT_CONF", "0.5"))
 DETECT_EVERY_N = max(1, int(os.getenv("DETECT_EVERY_N", "3")))   # detect ทุกกี่เฟรม (ลด CPU)
 COUNT_POST_SEC = float(os.getenv("COUNT_POST_SEC", "2"))         # ส่ง count ขึ้น gateway ทุกกี่วิ
-_detector = None   # สร้างครั้งเดียวใน manager() แล้วแชร์ทุกกล้อง
+_detector = None              # สร้าง lazy ครั้งแรกที่มีกล้องเปิด detect แล้วแชร์ทุกกล้อง
+_detector_lock = None         # asyncio.Lock — สร้าง lazy ใน loop (กัน cross-loop ตอน restart)
+
+
+async def ensure_detector():
+    """สร้าง PersonDetector ครั้งเดียว (lazy) — เรียกเมื่อมีกล้องเปิด detect"""
+    global _detector, _detector_lock
+    if _detector is not None:
+        return _detector
+    if _detector_lock is None:
+        _detector_lock = asyncio.Lock()
+    async with _detector_lock:
+        if _detector is None:
+            logger.info(f"สร้าง detector (backend={DETECT_BACKEND} conf={DETECT_CONF})")
+            try:
+                _detector = await asyncio.to_thread(PersonDetector, DETECT_BACKEND, DETECT_CONF)
+            except Exception as e:
+                logger.error(f"สร้าง detector ไม่สำเร็จ: {e}")
+                _detector = None
+    return _detector
 
 
 def _post_count(cam_id, count):
@@ -108,7 +127,7 @@ class RTSPCapture:
 
 def _cam_sig(cam):
     """ลายเซ็น config — เปลี่ยนเมื่อ rtsp/fps/quality เปลี่ยน → restart task"""
-    return f"{cam['rtspUrl']}|{cam['fps']}|{cam['quality']}|{cam['transport']}|{cam['width']}x{cam['height']}"
+    return f"{cam['rtspUrl']}|{cam['fps']}|{cam['quality']}|{cam['transport']}|{cam['width']}x{cam['height']}|{cam['detect']}"
 
 
 async def camera_task(cam):
@@ -117,6 +136,8 @@ async def camera_task(cam):
     ws_url = f"{SERVER_URL}?key={RELAY_KEY}&cam={cam_id}"
     enc = [cv2.IMWRITE_JPEG_QUALITY, cam["quality"]]
     interval = 1.0 / max(1, cam["fps"])
+    do_detect = bool(cam.get("detect"))   # เปิด detect เฉพาะกล้องนี้ (ตั้งที่ /settings)
+    detector = None
 
     while should_run:
         capture = None; ws = None
@@ -138,15 +159,18 @@ async def camera_task(cam):
                 frame = capture.get_frame()
                 if frame is None:
                     await asyncio.sleep(0.005); continue
-                if _detector is not None:
-                    frame = frame.copy()                       # กันวาดทับเฟรมที่ capture แชร์อยู่
-                    frame_i += 1
-                    if frame_i % DETECT_EVERY_N == 0:          # detect ทุก N เฟรม (offload เข้า thread)
-                        last_boxes = await asyncio.to_thread(_detector.detect, frame)
-                    count = PersonDetector.draw(frame, last_boxes)
-                    if time.time() - last_post >= COUNT_POST_SEC:   # ส่ง count ขึ้น gateway → heatmap
-                        last_post = time.time()
-                        asyncio.create_task(asyncio.to_thread(_post_count, cam_id, count))
+                if do_detect:
+                    if detector is None:
+                        detector = await ensure_detector()
+                    if detector is not None:
+                        frame = frame.copy()                   # กันวาดทับเฟรมที่ capture แชร์อยู่
+                        frame_i += 1
+                        if frame_i % DETECT_EVERY_N == 0:      # detect ทุก N เฟรม (offload เข้า thread)
+                            last_boxes = await asyncio.to_thread(detector.detect, frame)
+                        count = PersonDetector.draw(frame, last_boxes)
+                        if time.time() - last_post >= COUNT_POST_SEC:   # ส่ง count ขึ้น gateway → heatmap
+                            last_post = time.time()
+                            asyncio.create_task(asyncio.to_thread(_post_count, cam_id, count))
                 ok, jpeg = cv2.imencode(".jpg", frame, enc)
                 if not ok: continue
                 try:
@@ -183,6 +207,7 @@ def fetch_cameras():
         cam_id, rtsp = m.get("camId"), m.get("rtspUrl")
         if not cam_id or not rtsp:
             continue
+        det = m.get("detect")
         out.append({
             "camId": str(cam_id),
             "rtspUrl": rtsp,
@@ -191,53 +216,68 @@ def fetch_cameras():
             "transport": (m.get("transport") or DEF_TRANSPORT).lower(),
             "width": int(m.get("width") or DEF_WIDTH),
             "height": int(m.get("height") or DEF_HEIGHT),
+            "detect": DETECT_ENABLED if det is None else bool(det),   # เปิด/ปิด detect ราย-กล้อง (/settings)
         })
     return out
 
 
 async def manager():
     """ดึงรายการกล้องเป็นระยะ → start/stop/restart task ตาม config ใน registry"""
-    global _detector
     tasks = {}   # camId → {task, sig}
     logger.info(f"=== CCTV relay (registry-driven) ===")
     logger.info(f"  Gateway: {GATEWAY_URL}/api/devices?category=camera")
     logger.info(f"  Server:  {SERVER_URL}")
-    if DETECT_ENABLED:
-        logger.info(f"  Detect:  ON (backend={DETECT_BACKEND} conf={DETECT_CONF} every={DETECT_EVERY_N})")
-        _detector = await asyncio.to_thread(PersonDetector, DETECT_BACKEND, DETECT_CONF)
-    else:
-        logger.info(f"  Detect:  OFF")
+    logger.info(f"  Detect:  ราย-กล้อง (ตั้งที่ /settings) · default={DETECT_ENABLED} backend={DETECT_BACKEND}")
     while should_run:
         try:
-            cams = await asyncio.to_thread(fetch_cameras)
-        except Exception as e:
-            logger.warning(f"fetch cameras failed: {e}")
-            cams = None
-
-        if cams is not None:
-            by_id = {c["camId"]: c for c in cams}
-            # ลบ/รีสตาร์ท
+            # watchdog: เก็บ task ที่ตายเอง (ไม่ควรเกิด แต่กันไว้) → สร้างใหม่รอบนี้
             for cam_id in list(tasks):
-                if cam_id not in by_id:
-                    logger.info(f"[{cam_id}] removed → stop"); tasks[cam_id]["task"].cancel(); del tasks[cam_id]
-                elif tasks[cam_id]["sig"] != _cam_sig(by_id[cam_id]):
-                    logger.info(f"[{cam_id}] config changed → restart"); tasks[cam_id]["task"].cancel(); del tasks[cam_id]
-            # เพิ่มใหม่
-            for cam_id, cam in by_id.items():
-                if cam_id not in tasks:
-                    logger.info(f"[{cam_id}] start ({cam['rtspUrl'][:30]}…)")
-                    tasks[cam_id] = {"task": asyncio.create_task(camera_task(cam)), "sig": _cam_sig(cam)}
+                t = tasks[cam_id]["task"]
+                if t.done():
+                    if not t.cancelled():
+                        try: exc = t.exception()
+                        except Exception: exc = None
+                        logger.warning(f"[{cam_id}] task หยุดเอง ({exc}) → restart")
+                    del tasks[cam_id]
+
+            try:
+                cams = await asyncio.to_thread(fetch_cameras)
+            except Exception as e:
+                logger.warning(f"fetch cameras failed: {e}")
+                cams = None
+
+            if cams is not None:
+                by_id = {c["camId"]: c for c in cams}
+                # ลบ/รีสตาร์ท
+                for cam_id in list(tasks):
+                    if cam_id not in by_id:
+                        logger.info(f"[{cam_id}] removed → stop"); tasks[cam_id]["task"].cancel(); del tasks[cam_id]
+                    elif tasks[cam_id]["sig"] != _cam_sig(by_id[cam_id]):
+                        logger.info(f"[{cam_id}] config changed → restart"); tasks[cam_id]["task"].cancel(); del tasks[cam_id]
+                # เพิ่มใหม่
+                for cam_id, cam in by_id.items():
+                    if cam_id not in tasks:
+                        logger.info(f"[{cam_id}] start ({cam['rtspUrl'][:30]}…)")
+                        tasks[cam_id] = {"task": asyncio.create_task(camera_task(cam)), "sig": _cam_sig(cam)}
+        except Exception as e:
+            logger.error(f"manager loop error: {e}")   # รอบเดียวพัง ห้ามล้มทั้ง relay
 
         await asyncio.sleep(REFRESH_SEC)
 
 
 def main():
-    global should_run
-    try:
-        asyncio.run(manager())
-    except KeyboardInterrupt:
-        should_run = False
-        logger.info("stopped")
+    global should_run, _detector_lock
+    while should_run:
+        try:
+            asyncio.run(manager())
+            break                                   # ออกปกติ (should_run=False)
+        except KeyboardInterrupt:
+            should_run = False
+            logger.info("stopped")
+        except Exception as e:
+            logger.error(f"relay crashed: {e} — restart ใน 5 วิ")
+            _detector_lock = None                   # lock ผูก loop เก่า → ต้องสร้างใหม่
+            time.sleep(5)
 
 
 if __name__ == "__main__":

@@ -1,26 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
 import { Bell, AlertTriangle, Info, Zap, ArrowUpRight } from 'lucide-react';
 
-/* ── Floor2 plan constants ──────────────────────────────────────────────── */
-const FLOOR2_KEY = 'floor2_zones'
-const PREVIEW_CAM1_KEY = 'preview_cam1_id'
-const CAM1_CAPACITY = 50
-
-const MOCK_CAMS = [
-  { id: '2',  label: 'กล้อง 2',  pct: 45 },
-  { id: '3',  label: 'กล้อง 3',  pct: 72 },
-  { id: '4',  label: 'กล้อง 4',  pct: 30 },
-  { id: '5',  label: 'กล้อง 5',  pct: 88 },
-  { id: '6',  label: 'กล้อง 6',  pct: 55 },
-  { id: '7',  label: 'กล้อง 7',  pct: 19 },
-  { id: '8',  label: 'กล้อง 8',  pct: 63 },
-  { id: '9',  label: 'กล้อง 9',  pct: 41 },
-  { id: '10', label: 'กล้อง 10', pct: 77 },
-  { id: '11', label: 'กล้อง 11', pct: 93 },
-  { id: '12', label: 'กล้อง 12', pct: 36 },
-  { id: '13', label: 'กล้อง 13', pct: 58 },
-]
+// gateway (registry + จำนวนคนสด) — ชุดเดียวกับ dashboard
+const DEVICES_API = (import.meta.env.VITE_DEVICES_API || 'http://localhost:8002').replace(/\/$/, '')
 
 function camColor(pct) {
   if (pct >= 85) return '#ef4444'
@@ -37,51 +19,65 @@ function camLabel(pct) {
 const FLOOR_T = 'matrix(0,-.75,.75,0,-.000061035159,595.32)'
 
 export default function LayerGreedy() {
-  const [searchParams] = useSearchParams()
-  const apiBase = (searchParams.get('gateway') || import.meta.env.VITE_GATEWAY_URL || '').replace(/\/$/, '')
-
   const [pulse, setPulse] = useState(true);
 
-  const cam1Id = localStorage.getItem(PREVIEW_CAM1_KEY) || ''
-  const [cam1Pct, setCam1Pct] = useState(0)
-  const [cam1Count, setCam1Count] = useState(0)
-  const abortRef = useRef(null)
-
-  const fetchCam1 = useCallback(async () => {
-    if (!apiBase || !cam1Id) return
-    if (abortRef.current) abortRef.current.abort()
-    abortRef.current = new AbortController()
-    try {
-      const res = await fetch(apiBase + '/api/cameras', { signal: abortRef.current.signal })
-      if (!res.ok) return
-      const data = await res.json()
-      const cam = data.find(c => String(c.id) === String(cam1Id))
-      if (cam) {
-        const count = cam.total_people || 0
-        setCam1Count(count)
-        setCam1Pct(Math.min(Math.round(count / CAM1_CAPACITY * 100), 100))
-      }
-    } catch (e) {
-      if (e.name !== 'AbortError') console.warn('cam1 fetch error', e)
-    }
-  }, [apiBase, cam1Id])
+  // ── ข้อมูลจริง: กล้องจาก registry + จำนวนคนสด (ชุดเดียวกับ heatmap/เกจของ dashboard) ──
+  const [cams, setCams]     = useState([])   // [{ camId, label, capacity }]
+  const [counts, setCounts] = useState({})   // camId -> { count, stale }
 
   useEffect(() => {
-    fetchCam1()
-    const id = setInterval(fetchCam1, 2000)
-    return () => { clearInterval(id); if (abortRef.current) abortRef.current.abort() }
-  }, [fetchCam1])
+    let alive = true
+    async function load() {
+      try {
+        const r = await fetch(`${DEVICES_API}/api/config`)
+        const j = await r.json()
+        const list = []
+        for (const room of (j.rooms || []))
+          for (const d of (room.devices || []))
+            if (d.category === 'camera' && d.meta?.camId)
+              list.push({ camId: String(d.meta.camId), label: d.label || `กล้อง ${d.meta.camId}`, capacity: Number(d.meta?.capacity) || 0 })
+        if (alive) setCams(list)
+      } catch { /* keep */ }
+    }
+    load()
+    const id = setInterval(load, 30000)
+    return () => { alive = false; clearInterval(id) }
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+    async function poll() {
+      try {
+        const r = await fetch(`${DEVICES_API}/api/camera-counts`)
+        const j = await r.json()
+        if (alive) setCounts(j.counts || {})
+      } catch { /* keep */ }
+    }
+    poll()
+    const id = setInterval(poll, 2000)
+    return () => { alive = false; clearInterval(id) }
+  }, [])
 
   useEffect(() => {
     const interval = setInterval(() => setPulse(p => !p), 2000)
     return () => clearInterval(interval)
   }, [])
 
-  const gaugeScore  = cam1Id ? cam1Pct : 60
+  // รวม count + capacity → % ต่อกล้อง (capacity = "คนที่ถือว่าเต็มภาพ" จาก /settings)
+  const camRows = cams.map(c => {
+    const cc = counts[c.camId]
+    const live = !!cc && !cc.stale
+    const count = cc?.count ?? 0
+    const pct = (live && c.capacity > 0) ? Math.min(100, Math.round((count / c.capacity) * 100)) : null
+    return { ...c, live, count, pct }
+  })
+  const livePcts = camRows.filter(r => r.pct != null).map(r => r.pct)
+  const hasData = livePcts.length > 0
+  const gaugeScore  = hasData ? Math.round(livePcts.reduce((a, b) => a + b, 0) / livePcts.length) : 0
   const needleAngle = (gaugeScore / 100) * 180
   const gaugeColor  = gaugeScore >= 85 ? '#ef4444' : gaugeScore >= 70 ? '#f97316' : gaugeScore >= 40 ? '#f59e0b' : '#10b981'
-  const gaugeLabel  = gaugeScore >= 85 ? 'หนาแน่นมาก' : gaugeScore >= 70 ? 'หนาแน่น' : gaugeScore >= 40 ? 'เริ่มหนาแน่น' : 'ค่อนข้างว่าง'
-  const isCritical  = gaugeScore >= 85
+  const gaugeLabel  = hasData ? camLabel(gaugeScore) : 'ยังไม่มีข้อมูล'
+  const isCritical  = hasData && gaugeScore >= 85
 
   return (
     <div className="min-h-screen w-full bg-[#030d0c] text-[#e2f1ee] font-sans px-2 py-6 sm:px-4 sm:py-8 md:px-6 md:py-8 select-none flex flex-col justify-center">
@@ -148,61 +144,37 @@ export default function LayerGreedy() {
             <div className="flex flex-col gap-2 overflow-y-auto flex-1 min-h-0"
               style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
 
-              {/* Camera 1 — Real API */}
-              {(() => {
-                const pct = cam1Pct
-                const color = camColor(pct)
-                const live = !!cam1Id && !!apiBase
+              {camRows.length === 0 && (
+                <div className="text-[10px] text-[#6fa39b] px-2 py-6 text-center leading-relaxed">
+                  ยังไม่มีกล้องใน registry<br />เพิ่มกล้องที่หน้า /settings
+                </div>
+              )}
+              {camRows.map(cam => {
+                const pct = cam.pct
+                const color = camColor(pct ?? 0)
                 return (
-                  <div className="flex items-center h-[52px] cursor-default group w-full">
+                  <div key={cam.camId} className="flex items-center h-[52px] cursor-default group w-full">
                     <div className="w-[56px] h-[56px] flex-shrink-0 flex items-center justify-center select-none relative z-10">
                       <svg className="w-full h-full" viewBox="0 0 100 100">
                         <circle cx="50" cy="50" r="48" fill="#051715" className="transition-colors duration-300 group-hover:fill-[#061c18]" />
                         <g transform="rotate(-90 50 50)">
-                          <circle cx="50" cy="50" r="36" fill="none" stroke={pct > 0 ? color : '#102620'} strokeWidth="8" strokeDasharray="52.55 173.64" strokeDashoffset="0" />
-                          <circle cx="50" cy="50" r="36" fill="none" stroke={pct >= 25 ? color : '#102620'} strokeWidth="8" strokeDasharray="52.55 173.64" strokeDashoffset="-56.55" />
-                          <circle cx="50" cy="50" r="36" fill="none" stroke={pct >= 50 ? color : '#102620'} strokeWidth="8" strokeDasharray="52.55 173.64" strokeDashoffset="-113.1" />
-                          <circle cx="50" cy="50" r="36" fill="none" stroke={pct >= 75 ? color : '#102620'} strokeWidth="8" strokeDasharray="52.55 173.64" strokeDashoffset="-169.65" />
+                          <circle cx="50" cy="50" r="36" fill="none" stroke={(pct ?? 0) > 0 ? color : '#102620'} strokeWidth="8" strokeDasharray="52.55 173.64" strokeDashoffset="0" />
+                          <circle cx="50" cy="50" r="36" fill="none" stroke={(pct ?? 0) >= 25 ? color : '#102620'} strokeWidth="8" strokeDasharray="52.55 173.64" strokeDashoffset="-56.55" />
+                          <circle cx="50" cy="50" r="36" fill="none" stroke={(pct ?? 0) >= 50 ? color : '#102620'} strokeWidth="8" strokeDasharray="52.55 173.64" strokeDashoffset="-113.1" />
+                          <circle cx="50" cy="50" r="36" fill="none" stroke={(pct ?? 0) >= 75 ? color : '#102620'} strokeWidth="8" strokeDasharray="52.55 173.64" strokeDashoffset="-169.65" />
                         </g>
-                        <text x="50" y="56" textAnchor="middle" fill="#ffffff" fontSize="15" fontWeight="bold" fontFamily="system-ui,-apple-system,sans-serif">{pct}%</text>
+                        <text x="50" y="56" textAnchor="middle" fill="#ffffff" fontSize="15" fontWeight="bold" fontFamily="system-ui,-apple-system,sans-serif">{pct == null ? '--' : `${pct}%`}</text>
                       </svg>
                     </div>
                     <div className="flex-1 flex items-center h-full -ml-7 bg-[#041513] border-t border-b border-r border-solid rounded-r-xl pr-3 pl-8 transition-all duration-300 group-hover:bg-[#061c18]" style={{ borderColor: color }}>
                       <div className="flex flex-col justify-center select-none min-w-0">
                         <div className="flex items-center gap-1">
-                          <span className="text-[11px] font-bold tracking-wide leading-snug truncate" style={{ color, textShadow: `0 0 8px ${color}80` }}>กล้อง 1</span>
-                          {live && <span className="text-[7px] bg-green-500/20 text-green-400 px-1 py-0.5 rounded font-bold tracking-wider flex-shrink-0">LIVE</span>}
+                          <span className="text-[11px] font-bold tracking-wide leading-snug truncate" style={{ color, textShadow: `0 0 8px ${color}80` }}>{cam.label}</span>
+                          {cam.live && <span className="text-[7px] bg-green-500/20 text-green-400 px-1 py-0.5 rounded font-bold tracking-wider flex-shrink-0">LIVE</span>}
                         </div>
                         <span className="text-[9px] font-semibold tracking-wide leading-snug mt-0.5 truncate" style={{ color: `${color}cc` }}>
-                          {camLabel(pct)}{cam1Count > 0 ? ` · ${cam1Count} คน` : ''}
+                          {pct == null ? (cam.capacity > 0 ? 'รอข้อมูลกล้อง' : 'ยังไม่ตั้งคนเต็มภาพ') : `${camLabel(pct)} · ${cam.count} คน`}
                         </span>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })()}
-
-              {/* Cameras 2–13 — Mock */}
-              {MOCK_CAMS.map(cam => {
-                const color = camColor(cam.pct)
-                return (
-                  <div key={cam.id} className="flex items-center h-[52px] cursor-default group w-full">
-                    <div className="w-[56px] h-[56px] flex-shrink-0 flex items-center justify-center select-none relative z-10">
-                      <svg className="w-full h-full" viewBox="0 0 100 100">
-                        <circle cx="50" cy="50" r="48" fill="#051715" className="transition-colors duration-300 group-hover:fill-[#061c18]" />
-                        <g transform="rotate(-90 50 50)">
-                          <circle cx="50" cy="50" r="36" fill="none" stroke={cam.pct > 0 ? color : '#102620'} strokeWidth="8" strokeDasharray="52.55 173.64" strokeDashoffset="0" />
-                          <circle cx="50" cy="50" r="36" fill="none" stroke={cam.pct >= 25 ? color : '#102620'} strokeWidth="8" strokeDasharray="52.55 173.64" strokeDashoffset="-56.55" />
-                          <circle cx="50" cy="50" r="36" fill="none" stroke={cam.pct >= 50 ? color : '#102620'} strokeWidth="8" strokeDasharray="52.55 173.64" strokeDashoffset="-113.1" />
-                          <circle cx="50" cy="50" r="36" fill="none" stroke={cam.pct >= 75 ? color : '#102620'} strokeWidth="8" strokeDasharray="52.55 173.64" strokeDashoffset="-169.65" />
-                        </g>
-                        <text x="50" y="56" textAnchor="middle" fill="#ffffff" fontSize="15" fontWeight="bold" fontFamily="system-ui,-apple-system,sans-serif">{cam.pct}%</text>
-                      </svg>
-                    </div>
-                    <div className="flex-1 flex items-center h-full -ml-7 bg-[#041513] border-t border-b border-r border-solid rounded-r-xl pr-3 pl-8 transition-all duration-300 group-hover:bg-[#061c18]" style={{ borderColor: color }}>
-                      <div className="flex flex-col justify-center select-none min-w-0">
-                        <span className="text-[11px] font-bold tracking-wide leading-snug truncate" style={{ color, textShadow: `0 0 8px ${color}80` }}>{cam.label}</span>
-                        <span className="text-[9px] font-semibold tracking-wide leading-snug mt-0.5 truncate" style={{ color: `${color}cc` }}>{camLabel(cam.pct)}</span>
                       </div>
                     </div>
                   </div>
