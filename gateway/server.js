@@ -13,6 +13,7 @@ app.use(express.json());
 
 // ── Routes ──────────────────────────────────────────────────────────
 app.use('/api/esp32',    require('./routes/esp32'));
+app.use('/api/sensor',   require('./routes/sensor'));   // ESP ฝุ่น PM2.5 (PMS3003)
 app.use('/api/tasmota',  require('./routes/tasmota'));
 app.use('/api/tuya',     require('./routes/tuya'));
 app.use('/api/devices',  require('./routes/devices'));

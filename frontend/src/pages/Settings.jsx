@@ -154,6 +154,18 @@ function DeviceForm({ initial, roomId, onSave, onCancel }) {
             </select>
           </label>
         </>}
+        {cat === 'sensor' && <>
+          <label style={{ display: 'block' }}>
+            <span style={S.label}>ชนิดเซนเซอร์</span>
+            <select style={S.input} value={d.meta?.kind || 'pm25'} onChange={e => setMeta('kind', e.target.value)}>
+              <option value="pm25">ฝุ่น PM2.5 (PMS3003)</option>
+            </select>
+          </label>
+          <div style={{ gridColumn: '1 / -1', fontSize: 11, color: '#888', marginTop: 4 }}>
+            ตั้ง <b>deviceId</b> ให้ตรงกับที่ ESP ส่งมา (ESP POST → <code>{API}/api/sensor/data</code>) ·
+            ค่าฝุ่นล่าสุดอ่านจาก reading ของ deviceId นี้
+          </div>
+        </>}
       </div>
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
         <button style={S.btn} onClick={() => {

@@ -13,6 +13,11 @@ const readingSchema = new Schema({
   freq:     Number,
   // switch state
   relay:    { type: Boolean },  // true = ON
+  // air-quality sensor (Plantower PMS3003) — µg/m³
+  pm1_0:    Number,
+  pm2_5:    Number,
+  pm10:     Number,
+  aqi:      Number,   // US AQI จาก pm2_5
   // raw fallback
   raw: { type: Schema.Types.Mixed },
 }, { timeseries: undefined, versionKey: false });

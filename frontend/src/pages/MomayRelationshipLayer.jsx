@@ -1686,6 +1686,7 @@ function MomayStatusRow({ room, devices = [] }) {
   const irDev     = devices.find(d => d.category === 'ir-remote')
   const camDevs   = devices.filter(d => d.category === 'camera')   // ทุกกล้องในห้อง (สลับดูใน popup ได้)
   const camDev    = camDevs[0] || null
+  const sensorDev = devices.find(d => d.category === 'sensor')      // เซนเซอร์ฝุ่น PM2.5 (ถ้ามี)
   const [bulb, setBulb]   = useState(null)
   const [switchStates, setSwitchStates] = useState({})           // deviceId → true|false|null(offline)
   const [switchPending, setSwitchPending] = useState({})         // deviceId → true (รอ MQTT ยืนยัน)
@@ -1748,19 +1749,23 @@ function MomayStatusRow({ room, devices = [] }) {
         if (alive) setApi(r.ok)
       } catch { if (alive) setApi(false) }
 
-      // PM2.5 sensor
-      try {
-        const r = await _fetchWithTimeout(`${MOMAY_API}/pm25`, 4000)
-        if (r.ok) {
-          const j = await r.json()
-          if (alive) setPm25(j?.pm25 ?? j?.value ?? j?.pm2_5 ?? null)
-        }
-      } catch { /* endpoint not yet available */ }
+      // PM2.5 sensor (PMS3003) — อ่าน reading ล่าสุดของ sensor device จาก gateway
+      if (sensorDev?.deviceId) {
+        try {
+          const r = await _fetchWithTimeout(`${DEVICES_API}/api/devices/${encodeURIComponent(sensorDev.deviceId)}`, 4000)
+          if (r.ok) {
+            const j = await r.json()
+            const lt = j?.latest
+            const v = lt?.pm2_5 ?? lt?.raw?.pm2_5 ?? null
+            if (alive) setPm25(v ?? null)
+          }
+        } catch { /* gateway unreachable */ }
+      }
     }
     fetchStates()
     const id = setInterval(fetchStates, 8000)
     return () => { alive = false; clearInterval(id) }
-  }, [ROOM])
+  }, [ROOM, sensorDev?.deviceId])
 
   // สถานะสวิตช์ทุกตัวจาก gateway (source of truth): meta.relay + offline
   const switchIds = switchDevs.map(d => d.deviceId).join(',')
@@ -1790,14 +1795,6 @@ function MomayStatusRow({ room, devices = [] }) {
     const id = setInterval(poll, 5000)
     return () => { alive = false; clearInterval(id) }
   }, [switchIds])
-
-  // ── PM2.5 mock (สุ่มทุก 30 นาที เหมือน MomayBUUV.pm) ─────────────────────
-  useEffect(() => {
-    function refreshPm25() { setPm25(Math.round(25 + Math.random() * 30)) }
-    refreshPm25()
-    const id = setInterval(refreshPm25, 30 * 60 * 1000)
-    return () => clearInterval(id)
-  }, [])
 
   // ── Active booking ของห้องนี้ (poll ทุก 30 วิ) ───────────────────────────
   useEffect(() => {
