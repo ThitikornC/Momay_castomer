@@ -27,6 +27,10 @@ cctv/dist/
 cctv/*.spec
 cctv/Output/
 
+# ไฟล์ติดตั้งที่ build แล้ว (binaries ใหญ่ — เก็บแค่ README)
+cctv/release/*.exe
+cctv/release/*.zip
+
 # Build outputs & dependencies
 node_modules/
 frontend/dist/
