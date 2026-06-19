@@ -10,9 +10,13 @@
 //   ส่งเฟรมเองทุก ~1 วินาที (passive read) เฟรมยาว 24 ไบต์ ขึ้นต้นด้วย 0x42 0x4D
 //   อ่าน PM1.0 / PM2.5 / PM10 ทั้งแบบ CF=1 (standard) และ atmospheric (environment)
 //
-// การต่อสาย (PMS3003 → ESP32):
-//   VCC(pin1)=5V · GND(pin2)=GND · TX(pin5 ของ sensor) → RX2(GPIO16 ของ ESP)
+// การต่อสาย (PMS3003 → ESP32-S3-Zero):
+//   VCC(pin1)=5V · GND(pin2)=GND · TX(pin5 ของ sensor) → RX2(GP4 ของ ESP — ดู RX2_PIN)
 //   (เซ็นเซอร์ใช้ลอจิก 3.3V อยู่แล้ว ต่อ TX→RX ตรงได้)  RESET/SET ปล่อยลอย = ทำงานปกติ
+//
+// อัปโหลดบน ESP32-S3-Zero (Arduino IDE):
+//   Board = "ESP32S3 Dev Module"  ·  USB CDC On Boot = "Enabled" (ไม่งั้นไม่เห็น Serial Monitor)
+//   Upload Mode = "UART0 / Hardware CDC"  ·  เลือก COM port ของบอร์ด แล้ว Upload
 // ─────────────────────────────────────────────────────────────────────────────
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -42,14 +46,16 @@ void updatePostStatus(int code);
 
 WebServer server(80);
 
-const char* DEFAULT_SERVER_URL = "";   // gateway: https://<gateway>/api/sensor/data
+const char* DEFAULT_SERVER_URL = "https://gatewaycctvswirroombooking-production.up.railway.app/api/sensor/data";
 String        serverUrl;
 String        deviceId;                 // ว่าง = ใช้ "pm-<MAC suffix>" อัตโนมัติ (gateway auto-register)
 unsigned long sendInterval = 300000;     // ส่งทุก 5 นาที (ตั้งทับได้ที่ /settings)
 
-// PMS3003 ต่อกับ UART2 ของ ESP32 (RX2 = GPIO16 รับ TX จากเซ็นเซอร์)
-#define RX2_PIN 16
-#define TX2_PIN 17
+// PMS3003 ต่อ UART2 — ESP32-S3 เลือก GPIO ได้อิสระ
+//   ค่าเริ่ม GP4(RX)/GP5(TX) = ขาที่ ESP32-S3-Zero มี pad แน่นอน, ไม่ชน strapping/USB
+//   ESP32 ปกติใช้ 16/17 ก็ได้ · ต่อจริงใช้แค่ RX (รับ TX ของเซ็นเซอร์), TX แทบไม่ได้ใช้
+#define RX2_PIN 4
+#define TX2_PIN 5
 
 WiFiClient client;
 unsigned long lastSendTime = 0;
