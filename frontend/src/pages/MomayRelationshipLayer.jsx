@@ -1706,12 +1706,25 @@ function MomayStatusRow({ room, devices = [] }) {
   const [cctvOpen, setCctvOpen] = useState(false)
   const [camIdx, setCamIdx] = useState(0)               // กล้องที่กำลังดูใน popup (ห้องมีหลายกล้อง)
   const [cctvGrid, setCctvGrid] = useState(false)       // ดูแบบ grid (ทุกกล้องพร้อมกัน)
-  const [isFull, setIsFull] = useState(false)           // อยู่โหมดเต็มจอ
+  const [isFull, setIsFull] = useState(false)           // อยู่โหมดเต็มจอ (Fullscreen API จริง)
+  const [pseudoFull, setPseudoFull] = useState(false)   // เต็มจอจำลอง (iOS/Safari ที่ไม่รองรับ Fullscreen API บน <div>)
+  const full = isFull || pseudoFull
   useEffect(() => {
-    const onFs = () => setIsFull(!!document.fullscreenElement)
+    const onFs = () => setIsFull(!!(document.fullscreenElement || document.webkitFullscreenElement))
     document.addEventListener('fullscreenchange', onFs)
-    return () => document.removeEventListener('fullscreenchange', onFs)
+    document.addEventListener('webkitfullscreenchange', onFs)
+    return () => {
+      document.removeEventListener('fullscreenchange', onFs)
+      document.removeEventListener('webkitfullscreenchange', onFs)
+    }
   }, [])
+  // ESC ออกจากโหมดเต็มจอจำลอง (Fullscreen API จริงเบราว์เซอร์จัดการ ESC ให้เอง)
+  useEffect(() => {
+    if (!pseudoFull) return
+    const onKey = e => { if (e.key === 'Escape') setPseudoFull(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [pseudoFull])
   const [cctvStatus, setCctvStatus] = useState('idle')  // idle|connecting|live|offline
   const [camLive, setCamLive] = useState(null)          // health อิสระจาก popup (poll /cameras) — true|false|null
   const [cctvFps, setCctvFps] = useState('')
@@ -1923,8 +1936,22 @@ function MomayStatusRow({ room, devices = [] }) {
   function toggleFull() {
     const el = cctvCardRef.current
     if (!el) return
-    if (document.fullscreenElement) document.exitFullscreen?.()
-    else el.requestFullscreen?.()
+    if (pseudoFull) { setPseudoFull(false); return }
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement
+    if (fsEl) {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen
+      exit?.call(document)
+      return
+    }
+    const req = el.requestFullscreen || el.webkitRequestFullscreen
+    if (req) {
+      try {
+        const p = req.call(el)
+        if (p && typeof p.catch === 'function') p.catch(() => setPseudoFull(true))
+      } catch { setPseudoFull(true) }
+    } else {
+      setPseudoFull(true)   // iOS Safari: ไม่มี Element fullscreen → ใช้เต็มจอจำลอง
+    }
   }
   function cctvConnect() {
     if (cctvWsRef.current || cctvImgRef.current?.dataset.mjpeg) return
@@ -2238,9 +2265,9 @@ function MomayStatusRow({ room, devices = [] }) {
 
       {/* ── CCTV Popup ── */}
       {cctvOpen && (
-        <div onClick={e => { if (e.target === e.currentTarget) setCctvOpen(false) }}
+        <div onClick={e => { if (e.target === e.currentTarget) { setCctvOpen(false); setPseudoFull(false) } }}
           style={{ position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div ref={cctvCardRef} style={{ background: '#0a0a0a', border: isFull ? 'none' : '1.5px solid rgba(167,139,250,0.4)', borderRadius: isFull ? 0 : 14, overflow: 'hidden', width: isFull ? '100vw' : (cctvGrid ? 760 : 440), height: isFull ? '100vh' : 'auto', maxWidth: isFull ? '100vw' : '94vw', boxShadow: isFull ? 'none' : '0 0 40px rgba(167,139,250,0.15)', display: isFull ? 'flex' : 'block', flexDirection: 'column' }}>
+          <div ref={cctvCardRef} style={{ background: '#0a0a0a', border: full ? 'none' : '1.5px solid rgba(167,139,250,0.4)', borderRadius: full ? 0 : 14, overflow: 'hidden', width: full ? '100vw' : (cctvGrid ? 760 : 440), height: full ? '100vh' : 'auto', maxWidth: full ? '100vw' : '94vw', boxShadow: full ? 'none' : '0 0 40px rgba(167,139,250,0.15)', display: full ? 'flex' : 'block', flexDirection: 'column', ...(pseudoFull ? { position: 'fixed', inset: 0 } : {}) }}>
             {/* Header */}
             <div style={{ background: 'linear-gradient(135deg, rgba(167,139,250,0.2), rgba(167,139,250,0.08))', padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(167,139,250,0.2)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2264,12 +2291,12 @@ function MomayStatusRow({ room, devices = [] }) {
                   <button onClick={toggleFull} title="เต็มจอ"
                     style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 7, width: 28, height: 26, color: '#aaa', fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>⛶</button>
                 </>)}
-                <button onClick={() => setCctvOpen(false)} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '50%', width: 26, height: 26, color: '#aaa', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+                <button onClick={() => { setCctvOpen(false); setPseudoFull(false) }} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '50%', width: 26, height: 26, color: '#aaa', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
               </div>
             </div>
             {/* Video feed */}
             {cctvGrid ? (
-              <div style={{ background: '#000', padding: 8, display: 'grid', gap: 8, gridTemplateColumns: nCams <= 1 ? '1fr' : nCams <= 4 ? '1fr 1fr' : '1fr 1fr 1fr', ...(isFull ? { flex: 1, overflowY: 'auto', alignContent: 'start' } : {}) }}>
+              <div style={{ background: '#000', padding: 8, display: 'grid', gap: 8, gridTemplateColumns: nCams <= 1 ? '1fr' : nCams <= 4 ? '1fr 1fr' : '1fr 1fr 1fr', ...(full ? { flex: 1, overflowY: 'auto', alignContent: 'start' } : {}) }}>
                 {camDevs.map((d, i) => (
                   <CctvTile key={d.deviceId || i} wsUrl={camWsOf(d)}
                     label={d.label || (d.meta?.camId ? `กล้อง ${d.meta.camId}` : `กล้อง ${i + 1}`)}
@@ -2277,7 +2304,7 @@ function MomayStatusRow({ room, devices = [] }) {
                 ))}
               </div>
             ) : (
-            <div style={{ position: 'relative', background: '#000', ...(isFull ? { flex: 1, minHeight: 0 } : { aspectRatio: '4/3' }) }}
+            <div style={{ position: 'relative', background: '#000', ...(full ? { flex: 1, minHeight: 0 } : { aspectRatio: '4/3' }) }}
               onTouchStart={e => { touchXRef.current = e.changedTouches[0].clientX }}
               onTouchEnd={e => {
                 if (touchXRef.current == null || nCams < 2) return
