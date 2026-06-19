@@ -45,7 +45,7 @@ WebServer server(80);
 const char* DEFAULT_SERVER_URL = "";   // gateway: https://<gateway>/api/sensor/data
 String        serverUrl;
 String        deviceId;                 // ว่าง = ใช้ "pm-<MAC suffix>" อัตโนมัติ (gateway auto-register)
-unsigned long sendInterval = 60000;
+unsigned long sendInterval = 300000;     // ส่งทุก 5 นาที (ตั้งทับได้ที่ /settings)
 
 // PMS3003 ต่อกับ UART2 ของ ESP32 (RX2 = GPIO16 รับ TX จากเซ็นเซอร์)
 #define RX2_PIN 16
@@ -203,7 +203,7 @@ void loadConfig() {
   Preferences p; p.begin("cfg", true);
   serverUrl    = p.getString("server_url", DEFAULT_SERVER_URL);
   deviceId     = p.getString("device_id", "");
-  sendInterval = (unsigned long)p.getUInt("interval_s", 60) * 1000UL;
+  sendInterval = (unsigned long)p.getUInt("interval_s", 300) * 1000UL;   // default 5 นาที
   p.end();
   Serial.printf("Config: url=%s deviceId=%s interval(s)=%lu\n",
                 serverUrl.c_str(), deviceId.c_str(), sendInterval/1000);

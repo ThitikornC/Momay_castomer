@@ -35,7 +35,7 @@
 ## payload ที่ POST ขึ้น gateway
 ส่งเข้า **gateway** (ตัวเดียวกับที่ dashboard ใช้เป็น `VITE_DEVICES_API`) — ไม่ใช่ backend มิเตอร์ไฟ
 ตั้ง **Server URL** ของ ESP (ที่ `/settings`) = **`https://<gateway>/api/sensor/data`**
-JSON ส่งทุก `interval` วินาที (default 60s):
+JSON ส่งทุก `interval` วินาที (default 300s = 5 นาที, ตั้งทับที่ `/settings`):
 ```json
 {
   "deviceId": "pm-aabbcc",
