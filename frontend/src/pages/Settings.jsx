@@ -44,6 +44,12 @@ const CAT_META = {
   other:       { color: '#9ca3af' },
 }
 const catMeta = v => CAT_META[v] || CAT_META.other
+// อันดับหมวดหมู่ (ใช้จัดกลุ่มการ์ดอุปกรณ์ในห้อง ตามลำดับใน CATEGORIES)
+const catRank = v => { const i = CATEGORIES.findIndex(c => c.value === v); return i === -1 ? 99 : i }
+// จัดกลุ่มอุปกรณ์ตามหมวด แล้วเรียงภายในหมวดด้วยชื่อ (แทนลำดับการกรอก)
+const groupDevices = list => [...(list || [])].sort((a, b) =>
+  catRank(a.category) - catRank(b.category) ||
+  String(a.label || a.deviceId).localeCompare(String(b.label || b.deviceId), 'th'))
 
 // ── styles ──────────────────────────────────────────────────────────
 const S = {
@@ -71,8 +77,11 @@ const S = {
   grid2:  { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 },
   devRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderTop: '1px solid rgba(255,255,255,0.06)', flexWrap: 'wrap' },
   // device cards grid
-  devGrid:{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12, marginTop: 14 },
-  devCard:{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 },
+  devGrid:{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10, marginTop: 12 },
+  devCard:{ position: 'relative', minHeight: 132, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 11, padding: 10, display: 'flex', flexDirection: 'column', gap: 7 },
+  // ไอคอนแจ้งเตือน offline มุมขวาบน (กดดูเหตุผล)
+  alertBtn:{ position: 'absolute', top: 8, right: 8, width: 22, height: 22, borderRadius: '50%', border: '1px solid rgba(239,68,68,0.5)', background: 'rgba(239,68,68,0.15)', color: '#f87171', fontSize: 12, lineHeight: 1, cursor: 'pointer', display: 'grid', placeItems: 'center', zIndex: 2 },
+  alertPop:{ position: 'absolute', top: 34, right: 8, width: 220, background: '#1a0a12', border: '1px solid rgba(239,68,68,0.4)', borderRadius: 10, padding: '9px 11px', fontSize: 11, lineHeight: 1.5, boxShadow: '0 10px 30px rgba(0,0,0,0.6)', zIndex: 5 },
   statusDot:{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0 },
   // ปุ่มเล็กในการ์ดอุปกรณ์
   miniBtn:{ cursor: 'pointer', border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.04)', color: '#aaa', borderRadius: 7, padding: '3px 10px', fontSize: 11, fontWeight: 600 },
@@ -84,23 +93,35 @@ const S = {
   modalX: { cursor: 'pointer', border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.04)', color: '#bbb', borderRadius: 8, width: 30, height: 30, fontSize: 13, lineHeight: 1 },
 }
 
+// เช็คจอมือถือ (responsive ผ่าน JS เพราะ style เป็น inline)
+function useIsMobile(bp = 640) {
+  const [m, setM] = useState(typeof window !== 'undefined' && window.innerWidth < bp)
+  useEffect(() => {
+    const on = () => setM(window.innerWidth < bp)
+    window.addEventListener('resize', on)
+    return () => window.removeEventListener('resize', on)
+  }, [bp])
+  return m
+}
+
 // การ์ดสรุปด้านบน (ตัวเลข + badge) แบบ Device Management
-// alert = true → เน้นสำคัญ (ขอบ+เงาเรืองแสงสี color, มีจุดกะพริบ)
-function StatCard({ color, label, value, sub, alert }) {
+// alert = true → เน้นสำคัญ (ขอบ+เงาเรืองแสงสี color, มีจุดกะพริบ) · compact = ย่อสำหรับมือถือ
+function StatCard({ color, label, value, sub, alert, compact }) {
   const alertStyle = alert ? {
     border: `1px solid ${color}`,
     background: `linear-gradient(160deg, ${color}1f 0%, rgba(16,7,24,0.95) 70%)`,
     boxShadow: `0 0 0 1px ${color}55, 0 8px 30px ${color}40`,
   } : {}
+  const cmp = compact ? { padding: 12 } : {}
   return (
-    <div style={{ ...S.statCard, borderTop: `${alert ? 3 : 2}px solid ${color}`, ...alertStyle }}>
+    <div style={{ ...S.statCard, ...cmp, borderTop: `${alert ? 3 : 2}px solid ${color}`, ...alertStyle }}>
       <div style={{ position: 'absolute', top: -30, right: -30, width: 110, height: 110, borderRadius: '50%', background: color, opacity: alert ? 0.18 : 0.08 }} />
-      <div style={{ ...S.statHd, color: alert ? color : S.statHd.color }}>
+      <div style={{ ...S.statHd, marginBottom: compact ? 8 : 14, fontSize: compact ? 12 : 14, color: alert ? color : S.statHd.color }}>
         {alert && value > 0 && <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}`, animation: 'momayPulse 1.2s ease-in-out infinite' }} />}
         {alert && '⚠ '}{label}
       </div>
-      <div style={{ ...S.statNum, color }}>{value}</div>
-      {sub && <div style={S.statSub}>{sub}</div>}
+      <div style={{ ...S.statNum, fontSize: compact ? 28 : 38, color }}>{value}</div>
+      {sub && <div style={{ ...S.statSub, marginTop: compact ? 8 : 12 }}>{sub}</div>}
     </div>
   )
 }
@@ -274,6 +295,7 @@ function DeviceForm({ initial, roomId, onSave, onCancel }) {
 // ── Main page ───────────────────────────────────────────────────────
 export default function Settings() {
   const toast = useToast()
+  const isMobile = useIsMobile()
   const [rooms, setRooms] = useState([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -281,6 +303,7 @@ export default function Settings() {
   const [addingRoom, setAddingRoom] = useState(false)
   const [editRoom, setEditRoom] = useState(null)        // roomId being edited
   const [deviceForm, setDeviceForm] = useState(null)    // { roomId, device }
+  const [alertOpen, setAlertOpen] = useState(null)      // dev._id ที่เปิด popover เหตุผล offline
 
   const load = useCallback(async () => {
     setLoading(true); setErr('')
@@ -353,30 +376,30 @@ export default function Settings() {
   const pct = (n, d) => d ? Math.round((n / d) * 100) : 0
 
   return (
-    <div style={S.page}>
+    <div style={{ ...S.page, padding: isMobile ? '14px 10px' : S.page.padding }}>
       <style>{`@keyframes momayPulse { 0%,100% { opacity: 1; transform: scale(1) } 50% { opacity: 0.35; transform: scale(0.7) } }`}</style>
       <div style={S.wrap}>
         {/* header — title + actions */}
         <div style={S.headRow}>
-          <div>
-            <h1 style={S.h1}>Momay Settings</h1>
-            <div style={S.sub}>จัดการห้องและอุปกรณ์ (มิเตอร์ / สวิตช์ / IR remote / กล้อง) · API: {API}</div>
+          <div style={{ minWidth: 0 }}>
+            <h1 style={{ ...S.h1, fontSize: isMobile ? 20 : 24 }}>Momay Settings</h1>
+            <div style={{ ...S.sub, fontSize: isMobile ? 11 : 13 }}>จัดการห้องและอุปกรณ์ (มิเตอร์ / สวิตช์ / IR remote / กล้อง)</div>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button style={S.btnGhost} onClick={load}>↻ รีเฟรช</button>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <button style={S.btnGhost} onClick={load}>↻{isMobile ? '' : ' รีเฟรช'}</button>
             <button style={S.btn} onClick={() => { setAddingRoom(true); setEditRoom(null) }}>+ เพิ่มห้อง</button>
           </div>
         </div>
 
-        {/* summary stat cards */}
-        <div style={S.statGrid}>
-          <StatCard color="#FFB800" label="ห้องทั้งหมด" value={rooms.length}
-            sub={`${camCount} กล้อง · ${totalDevices} อุปกรณ์รวม`} />
-          <StatCard color="#60a5fa" label="อุปกรณ์ทั้งหมด" value={totalDevices}
+        {/* summary stat cards — มือถือ 2×2 */}
+        <div style={{ ...S.statGrid, ...(isMobile ? { gridTemplateColumns: '1fr 1fr', gap: 10 } : {}) }}>
+          <StatCard compact={isMobile} color="#FFB800" label="ห้องทั้งหมด" value={rooms.length}
+            sub={`${totalDevices} อุปกรณ์ (รวม ${camCount} กล้อง)`} />
+          <StatCard compact={isMobile} color="#60a5fa" label="อุปกรณ์ทั้งหมด" value={totalDevices}
             sub={<span><span style={{ ...S.badge, background: 'rgba(96,165,250,0.15)', color: '#60a5fa' }}>{pct(activeDevices, totalDevices)}%</span>ออนไลน์</span>} />
-          <StatCard color="#10b981" label="กำลังทำงาน" value={activeDevices}
+          <StatCard compact={isMobile} color="#10b981" label="กำลังทำงาน" value={activeDevices}
             sub={<span><span style={{ ...S.badge, background: 'rgba(16,185,129,0.15)', color: '#10b981' }}>{pct(activeDevices, totalDevices)}%</span>ของทั้งหมด</span>} />
-          <StatCard color="#ef4444" alert label="ออฟไลน์ / รอตรวจ" value={offlineDevices}
+          <StatCard compact={isMobile} color="#ef4444" alert label="ออฟไลน์ / รอตรวจ" value={offlineDevices}
             sub={<span><span style={{ ...S.badge, background: 'rgba(239,68,68,0.2)', color: '#f87171', fontWeight: 800 }}>{pct(offlineDevices, totalDevices)}%</span>ของทั้งหมด</span>} />
         </div>
 
@@ -410,7 +433,7 @@ export default function Settings() {
             {/* devices — การ์ดย่อยต่ออุปกรณ์ */}
             <div>
               <div style={S.devGrid}>
-                {(room.devices || []).map(dev => {
+                {groupDevices(room.devices).map(dev => {
                   const m = catMeta(dev.category)
                   const isActive = dev.status === 'active'
                   const isOffline = dev.status === 'offline'
@@ -418,9 +441,22 @@ export default function Settings() {
                   const camUrl = dev.category === 'camera' && camViewerUrl(dev)
                   return (
                     <div key={dev._id} style={{ ...S.devCard, borderLeft: `3px solid ${m.color}` }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ color: '#eee', fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dev.label || dev.deviceId}</div>
-                        <div style={{ color: '#777', fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dev.deviceId}</div>
+                      {/* offline → ไอคอน info มุมขวาบน กดดูเหตุผล + คำแนะนำ */}
+                      {isOffline && dev.statusReason && (
+                        <>
+                          <button style={S.alertBtn} title="ทำไมออฟไลน์?"
+                            onClick={() => setAlertOpen(o => o === dev._id ? null : dev._id)}>ℹ</button>
+                          {alertOpen === dev._id && (
+                            <div style={S.alertPop} onClick={e => e.stopPropagation()}>
+                              <div style={{ color: '#f87171', fontWeight: 700, marginBottom: 4 }}>⚠ {dev.statusReason}</div>
+                              {dev.statusHint && <div style={{ color: '#cbb' }}>💡 {dev.statusHint}</div>}
+                            </div>
+                          )}
+                        </>
+                      )}
+                      <div style={{ minWidth: 0, paddingRight: isOffline ? 22 : 0 }}>
+                        <div style={{ color: '#eee', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dev.label || dev.deviceId}</div>
+                        <div style={{ color: '#777', fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dev.deviceId}</div>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                         <span style={{ ...S.tag, background: `${m.color}1f`, color: m.color }}>{catLabel(dev.category)}</span>
@@ -429,13 +465,6 @@ export default function Settings() {
                           {dev.status || 'unknown'}
                         </span>
                       </div>
-                      {/* offline → เหตุผล + คำแนะนำ */}
-                      {isOffline && dev.statusReason && (
-                        <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 10, padding: '8px 10px', fontSize: 11, lineHeight: 1.5 }}>
-                          <div style={{ color: '#f87171', fontWeight: 700 }}>⚠ {dev.statusReason}</div>
-                          {dev.statusHint && <div style={{ color: '#cbb' }}>💡 {dev.statusHint}</div>}
-                        </div>
-                      )}
                       {camUrl && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
                           <a href={camUrl} target="_blank" rel="noreferrer" style={{ color: '#60a5fa', textDecoration: 'none', fontWeight: 600 }}>🔗 เปิดดูกล้อง</a>
@@ -451,7 +480,7 @@ export default function Settings() {
                 })}
 
                 {/* การ์ด “เพิ่มอุปกรณ์” */}
-                <button style={{ ...S.devCard, alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#FFB800', border: '1px dashed rgba(255,184,0,0.35)', background: 'rgba(255,184,0,0.04)', fontSize: 13, fontWeight: 700, minHeight: 96 }}
+                <button style={{ ...S.devCard, alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#FFB800', border: '1px dashed rgba(255,184,0,0.35)', background: 'rgba(255,184,0,0.04)', fontSize: 12, fontWeight: 700, minHeight: 76 }}
                   onClick={() => setDeviceForm({ roomId: room.roomId, device: {} })}>
                   + เพิ่มอุปกรณ์
                 </button>
