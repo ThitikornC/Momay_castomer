@@ -44,12 +44,16 @@ const CAT_META = {
   other:       { color: '#9ca3af' },
 }
 const catMeta = v => CAT_META[v] || CAT_META.other
-// อันดับหมวดหมู่ (ใช้จัดกลุ่มการ์ดอุปกรณ์ในห้อง ตามลำดับใน CATEGORIES)
-const catRank = v => { const i = CATEGORIES.findIndex(c => c.value === v); return i === -1 ? 99 : i }
-// จัดกลุ่มอุปกรณ์ตามหมวด แล้วเรียงภายในหมวดด้วยชื่อ (แทนลำดับการกรอก)
-const groupDevices = list => [...(list || [])].sort((a, b) =>
-  catRank(a.category) - catRank(b.category) ||
-  String(a.label || a.deviceId).localeCompare(String(b.label || b.deviceId), 'th'))
+// แบ่งอุปกรณ์เป็นหมวดย่อย (มิเตอร์ / สวิตช์ / … ) เรียงตาม CATEGORIES แล้วเรียงชื่อในหมวด
+// → คืน [{ cat, items }] เพื่อ render เป็นแถวแยกต่อหมวด
+const groupByCategory = list => {
+  const buckets = {}
+  for (const d of (list || [])) (buckets[d.category || 'other'] ||= []).push(d)
+  const byName = (a, b) => String(a.label || a.deviceId).localeCompare(String(b.label || b.deviceId), 'th')
+  const known = CATEGORIES.map(c => c.value).filter(v => buckets[v]?.length)
+  const unknown = Object.keys(buckets).filter(v => !CATEGORIES.some(c => c.value === v))
+  return [...known, ...unknown].map(cat => ({ cat, items: buckets[cat].sort(byName) }))
+}
 
 // ── styles ──────────────────────────────────────────────────────────
 const S = {
@@ -77,7 +81,9 @@ const S = {
   grid2:  { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 },
   devRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderTop: '1px solid rgba(255,255,255,0.06)', flexWrap: 'wrap' },
   // device cards grid
-  devGrid:{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10, marginTop: 12 },
+  devGrid:{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 },
+  // หัวข้อหมวดย่อยในห้อง (มิเตอร์ / กล้อง / …)
+  devGroupHd:{ display: 'flex', alignItems: 'center', gap: 7, margin: '14px 2px 8px', fontSize: 12, fontWeight: 700, letterSpacing: 0.3 },
   devCard:{ position: 'relative', minHeight: 132, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 11, padding: 10, display: 'flex', flexDirection: 'column', gap: 7 },
   // ไอคอนแจ้งเตือน offline มุมขวาบน (กดดูเหตุผล)
   alertBtn:{ position: 'absolute', top: 8, right: 8, width: 22, height: 22, borderRadius: '50%', border: '1px solid rgba(239,68,68,0.5)', background: 'rgba(239,68,68,0.15)', color: '#f87171', fontSize: 12, lineHeight: 1, cursor: 'pointer', display: 'grid', placeItems: 'center', zIndex: 2 },
@@ -375,6 +381,53 @@ export default function Settings() {
   const camCount = allDevices.filter(d => d.category === 'camera').length
   const pct = (n, d) => d ? Math.round((n / d) * 100) : 0
 
+  // การ์ดอุปกรณ์หนึ่งใบ (ใช้ซ้ำในทุกหมวด)
+  const renderDeviceCard = (dev, roomId) => {
+    const m = catMeta(dev.category)
+    const isActive = dev.status === 'active'
+    const isOffline = dev.status === 'offline'
+    const stColor = isActive ? '#10b981' : isOffline ? '#ef4444' : '#f59e0b'
+    const camUrl = dev.category === 'camera' && camViewerUrl(dev)
+    return (
+      <div key={dev._id} style={{ ...S.devCard, borderLeft: `3px solid ${m.color}` }}>
+        {/* offline → ไอคอน info มุมขวาบน กดดูเหตุผล + คำแนะนำ */}
+        {isOffline && dev.statusReason && (
+          <>
+            <button style={S.alertBtn} title="ทำไมออฟไลน์?"
+              onClick={() => setAlertOpen(o => o === dev._id ? null : dev._id)}>ℹ</button>
+            {alertOpen === dev._id && (
+              <div style={S.alertPop} onClick={e => e.stopPropagation()}>
+                <div style={{ color: '#f87171', fontWeight: 700, marginBottom: 4 }}>⚠ {dev.statusReason}</div>
+                {dev.statusHint && <div style={{ color: '#cbb' }}>💡 {dev.statusHint}</div>}
+              </div>
+            )}
+          </>
+        )}
+        <div style={{ minWidth: 0, paddingRight: isOffline ? 22 : 0 }}>
+          <div style={{ color: '#eee', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dev.label || dev.deviceId}</div>
+          <div style={{ color: '#777', fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dev.deviceId}</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ ...S.tag, background: `${m.color}1f`, color: m.color }}>{catLabel(dev.category)}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: stColor }}>
+            <span style={{ ...S.statusDot, background: stColor }} />
+            {dev.status || 'unknown'}
+          </span>
+        </div>
+        {camUrl && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
+            <a href={camUrl} target="_blank" rel="noreferrer" style={{ color: '#60a5fa', textDecoration: 'none', fontWeight: 600 }}>🔗 เปิดดูกล้อง</a>
+            <button style={{ ...S.miniBtn, flex: 'none', padding: '3px 8px' }} onClick={() => { navigator.clipboard?.writeText(camUrl); toast('คัดลอกลิงก์แล้ว') }}>คัดลอกลิงก์</button>
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 6, marginTop: 'auto' }}>
+          <button style={S.miniBtn} onClick={() => setDeviceForm({ roomId, device: dev })}>แก้ไข</button>
+          <button style={S.miniDanger} onClick={() => deleteDevice(dev)}>ลบ</button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ ...S.page, padding: isMobile ? '14px 10px' : S.page.padding }}>
       <style>{`@keyframes momayPulse { 0%,100% { opacity: 1; transform: scale(1) } 50% { opacity: 0.35; transform: scale(0.7) } }`}</style>
@@ -430,57 +483,27 @@ export default function Settings() {
               </div>
             </div>
 
-            {/* devices — การ์ดย่อยต่ออุปกรณ์ */}
+            {/* devices — แยกเป็นหมวดย่อย แต่ละหมวดเป็นแถวกริดของตัวเอง */}
             <div>
-              <div style={S.devGrid}>
-                {groupDevices(room.devices).map(dev => {
-                  const m = catMeta(dev.category)
-                  const isActive = dev.status === 'active'
-                  const isOffline = dev.status === 'offline'
-                  const stColor = isActive ? '#10b981' : isOffline ? '#ef4444' : '#f59e0b'
-                  const camUrl = dev.category === 'camera' && camViewerUrl(dev)
-                  return (
-                    <div key={dev._id} style={{ ...S.devCard, borderLeft: `3px solid ${m.color}` }}>
-                      {/* offline → ไอคอน info มุมขวาบน กดดูเหตุผล + คำแนะนำ */}
-                      {isOffline && dev.statusReason && (
-                        <>
-                          <button style={S.alertBtn} title="ทำไมออฟไลน์?"
-                            onClick={() => setAlertOpen(o => o === dev._id ? null : dev._id)}>ℹ</button>
-                          {alertOpen === dev._id && (
-                            <div style={S.alertPop} onClick={e => e.stopPropagation()}>
-                              <div style={{ color: '#f87171', fontWeight: 700, marginBottom: 4 }}>⚠ {dev.statusReason}</div>
-                              {dev.statusHint && <div style={{ color: '#cbb' }}>💡 {dev.statusHint}</div>}
-                            </div>
-                          )}
-                        </>
-                      )}
-                      <div style={{ minWidth: 0, paddingRight: isOffline ? 22 : 0 }}>
-                        <div style={{ color: '#eee', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dev.label || dev.deviceId}</div>
-                        <div style={{ color: '#777', fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dev.deviceId}</div>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ ...S.tag, background: `${m.color}1f`, color: m.color }}>{catLabel(dev.category)}</span>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: stColor }}>
-                          <span style={{ ...S.statusDot, background: stColor }} />
-                          {dev.status || 'unknown'}
-                        </span>
-                      </div>
-                      {camUrl && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
-                          <a href={camUrl} target="_blank" rel="noreferrer" style={{ color: '#60a5fa', textDecoration: 'none', fontWeight: 600 }}>🔗 เปิดดูกล้อง</a>
-                          <button style={{ ...S.miniBtn, flex: 'none', padding: '3px 8px' }} onClick={() => { navigator.clipboard?.writeText(camUrl); toast('คัดลอกลิงก์แล้ว') }}>คัดลอกลิงก์</button>
-                        </div>
-                      )}
-                      <div style={{ display: 'flex', gap: 6, marginTop: 'auto' }}>
-                        <button style={S.miniBtn} onClick={() => setDeviceForm({ roomId: room.roomId, device: dev })}>แก้ไข</button>
-                        <button style={S.miniDanger} onClick={() => deleteDevice(dev)}>ลบ</button>
-                      </div>
+              {groupByCategory(room.devices).map(({ cat, items }) => {
+                const m = catMeta(cat)
+                return (
+                  <div key={cat}>
+                    <div style={{ ...S.devGroupHd, color: m.color }}>
+                      <span style={{ ...S.statusDot, width: 8, height: 8, background: m.color }} />
+                      {catLabel(cat)}
+                      <span style={{ color: '#666', fontWeight: 600 }}>({items.length})</span>
                     </div>
-                  )
-                })}
+                    <div style={S.devGrid}>
+                      {items.map(dev => renderDeviceCard(dev, room.roomId))}
+                    </div>
+                  </div>
+                )
+              })}
 
-                {/* การ์ด “เพิ่มอุปกรณ์” */}
-                <button style={{ ...S.devCard, alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#FFB800', border: '1px dashed rgba(255,184,0,0.35)', background: 'rgba(255,184,0,0.04)', fontSize: 12, fontWeight: 700, minHeight: 76 }}
+              {/* การ์ด “เพิ่มอุปกรณ์” — แยกแถวล่างสุด */}
+              <div style={{ ...S.devGrid, marginTop: 12 }}>
+                <button style={{ ...S.devCard, alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#FFB800', border: '1px dashed rgba(255,184,0,0.35)', background: 'rgba(255,184,0,0.04)', fontSize: 12, fontWeight: 700, minHeight: 64 }}
                   onClick={() => setDeviceForm({ roomId: room.roomId, device: {} })}>
                   + เพิ่มอุปกรณ์
                 </button>
