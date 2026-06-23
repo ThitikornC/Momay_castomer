@@ -34,23 +34,96 @@ const TYPE_BY_CATEGORY = {
   meter: 'meter', switch: 'tasmota', 'ir-remote': 'tuya-ir', camera: 'camera', sensor: 'manual', other: 'manual',
 }
 const catLabel = v => CATEGORIES.find(c => c.value === v)?.label || v
+// สี ต่อประเภทอุปกรณ์ — ใช้ในการ์ดอุปกรณ์
+const CAT_META = {
+  meter:       { color: '#FFB800' },
+  switch:      { color: '#60a5fa' },
+  'ir-remote': { color: '#a78bfa' },
+  camera:      { color: '#f472b6' },
+  sensor:      { color: '#34d399' },
+  other:       { color: '#9ca3af' },
+}
+const catMeta = v => CAT_META[v] || CAT_META.other
 
 // ── styles ──────────────────────────────────────────────────────────
 const S = {
-  page:   { minHeight: '100vh', background: '#0a020f', color: '#e6e6e6', fontFamily: 'Sarabun, sans-serif', padding: '24px 16px' },
-  wrap:   { maxWidth: 880, margin: '0 auto' },
-  h1:     { color: '#FFB800', fontSize: 22, fontWeight: 800, margin: '0 0 4px', letterSpacing: 1 },
-  sub:    { color: '#888', fontSize: 12, marginBottom: 20 },
-  card:   { background: 'rgba(20,8,28,0.8)', border: '1px solid rgba(255,184,0,0.25)', borderRadius: 12, padding: 16, marginBottom: 14 },
+  page:   { minHeight: '100vh', background: 'radial-gradient(1200px 600px at 50% -10%, rgba(255,184,0,0.06), transparent 60%), #0a020f', color: '#e6e6e6', fontFamily: 'Sarabun, sans-serif', padding: '24px 16px' },
+  wrap:   { maxWidth: 980, margin: '0 auto' },
+  // header row (title + actions) ─ แบบการ์ด Device Management
+  headRow:{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 20 },
+  h1:     { color: '#fff', fontSize: 24, fontWeight: 800, margin: '0 0 4px', letterSpacing: 0.3 },
+  sub:    { color: '#8a8a96', fontSize: 13 },
+  // summary stat cards
+  statGrid:{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14, marginBottom: 22 },
+  statCard:{ position: 'relative', background: 'linear-gradient(160deg, rgba(28,14,40,0.95) 0%, rgba(16,7,24,0.95) 100%)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 16, padding: 18, overflow: 'hidden', boxShadow: '0 8px 24px rgba(0,0,0,0.35)' },
+  statHd: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, color: '#cfcfda', fontSize: 14, fontWeight: 600 },
+  statNum:{ fontSize: 38, fontWeight: 800, color: '#fff', lineHeight: 1, letterSpacing: 0.5 },
+  statSub:{ marginTop: 12, fontSize: 12, color: '#7d7d8a' },
+  badge:  { display: 'inline-block', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20, marginRight: 6 },
+  card:   { background: 'rgba(20,8,28,0.8)', border: '1px solid rgba(255,184,0,0.18)', borderRadius: 16, padding: 16, marginBottom: 14, boxShadow: '0 6px 18px rgba(0,0,0,0.3)' },
   roomHd: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
   tag:    { fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'rgba(255,184,0,0.15)', color: '#FFB800' },
-  btn:    { cursor: 'pointer', border: '1px solid rgba(255,184,0,0.4)', background: 'rgba(255,184,0,0.12)', color: '#FFB800', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 700 },
-  btnGhost:{ cursor: 'pointer', border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#aaa', borderRadius: 8, padding: '6px 10px', fontSize: 12 },
-  btnDanger:{ cursor: 'pointer', border: '1px solid rgba(239,68,68,0.5)', background: 'rgba(239,68,68,0.12)', color: '#ef4444', borderRadius: 8, padding: '6px 10px', fontSize: 12, fontWeight: 700 },
+  btn:    { cursor: 'pointer', border: 'none', background: 'linear-gradient(135deg,#FFB800,#ff9500)', color: '#1a1004', borderRadius: 10, padding: '9px 16px', fontSize: 13, fontWeight: 800, boxShadow: '0 4px 14px rgba(255,184,0,0.3)' },
+  btnGhost:{ cursor: 'pointer', border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.03)', color: '#bbb', borderRadius: 10, padding: '8px 14px', fontSize: 12, fontWeight: 600 },
+  btnDanger:{ cursor: 'pointer', border: '1px solid rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.1)', color: '#ef4444', borderRadius: 10, padding: '8px 12px', fontSize: 12, fontWeight: 700 },
   input:  { width: '100%', boxSizing: 'border-box', background: '#160a20', border: '1px solid rgba(255,184,0,0.25)', borderRadius: 8, color: '#eee', padding: '8px 10px', fontSize: 13, marginTop: 4 },
   label:  { fontSize: 11, color: '#FFB800', fontWeight: 700 },
   grid2:  { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 },
-  devRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid rgba(255,255,255,0.06)', flexWrap: 'wrap' },
+  devRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderTop: '1px solid rgba(255,255,255,0.06)', flexWrap: 'wrap' },
+  // device cards grid
+  devGrid:{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12, marginTop: 14 },
+  devCard:{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 },
+  statusDot:{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0 },
+  // ปุ่มเล็กในการ์ดอุปกรณ์
+  miniBtn:{ cursor: 'pointer', border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.04)', color: '#bbb', borderRadius: 8, padding: '5px 12px', fontSize: 12, fontWeight: 600, flex: 1 },
+  miniDanger:{ cursor: 'pointer', border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)', color: '#ef4444', borderRadius: 8, padding: '5px 12px', fontSize: 12, fontWeight: 700, flex: 1 },
+  // popup modal
+  overlay:{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px' },
+  modal:  { width: '100%', maxWidth: 760, maxHeight: 'calc(100vh - 48px)', overflowY: 'auto', background: '#120516', border: '1px solid rgba(255,184,0,0.22)', borderRadius: 18, padding: 18, boxShadow: '0 24px 60px rgba(0,0,0,0.6)' },
+  modalHd:{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  modalX: { cursor: 'pointer', border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.04)', color: '#bbb', borderRadius: 8, width: 30, height: 30, fontSize: 13, lineHeight: 1 },
+}
+
+// การ์ดสรุปด้านบน (ตัวเลข + badge) แบบ Device Management
+// alert = true → เน้นสำคัญ (ขอบ+เงาเรืองแสงสี color, มีจุดกะพริบ)
+function StatCard({ color, label, value, sub, alert }) {
+  const alertStyle = alert ? {
+    border: `1px solid ${color}`,
+    background: `linear-gradient(160deg, ${color}1f 0%, rgba(16,7,24,0.95) 70%)`,
+    boxShadow: `0 0 0 1px ${color}55, 0 8px 30px ${color}40`,
+  } : {}
+  return (
+    <div style={{ ...S.statCard, borderTop: `${alert ? 3 : 2}px solid ${color}`, ...alertStyle }}>
+      <div style={{ position: 'absolute', top: -30, right: -30, width: 110, height: 110, borderRadius: '50%', background: color, opacity: alert ? 0.18 : 0.08 }} />
+      <div style={{ ...S.statHd, color: alert ? color : S.statHd.color }}>
+        {alert && value > 0 && <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}`, animation: 'momayPulse 1.2s ease-in-out infinite' }} />}
+        {alert && '⚠ '}{label}
+      </div>
+      <div style={{ ...S.statNum, color }}>{value}</div>
+      {sub && <div style={S.statSub}>{sub}</div>}
+    </div>
+  )
+}
+
+// popup modal ครอบฟอร์มเพิ่ม/แก้ไข
+function Modal({ title, onClose, children }) {
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    document.body.style.overflow = 'hidden'
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = '' }
+  }, [onClose])
+  return (
+    <div style={S.overlay} onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div style={S.modal} onClick={e => e.stopPropagation()}>
+        <div style={S.modalHd}>
+          <span style={{ fontSize: 16, fontWeight: 800, color: '#fff' }}>{title}</span>
+          <button style={S.modalX} onClick={onClose} aria-label="ปิด">✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  )
 }
 
 function Field({ label, value, onChange, placeholder, type = 'text' }) {
@@ -69,7 +142,7 @@ function RoomForm({ initial, onSave, onCancel }) {
   const set = (k, v) => setR(p => ({ ...p, [k]: v }))
   const isNew = !initial._id
   return (
-    <div style={{ ...S.card, background: 'rgba(255,184,0,0.05)' }}>
+    <div>
       <div style={S.grid2}>
         {isNew && <Field label="roomId (เฉพาะ/ห้ามซ้ำ)" value={r.roomId} onChange={v => set('roomId', v)} placeholder="เช่น ห้อง400" />}
         <Field label="ชื่อแสดง (label)" value={r.label} onChange={v => set('label', v)} placeholder="ห้อง 400" />
@@ -96,13 +169,14 @@ function RoomForm({ initial, onSave, onCancel }) {
 // ── Device editor form ──────────────────────────────────────────────
 function DeviceForm({ initial, roomId, onSave, onCancel }) {
   const [d, setD] = useState({ category: 'meter', meta: {}, ...initial, room: roomId })
+  const [adv, setAdv] = useState(false)        // ตั้งค่าขั้นสูง (ซ่อนช่องที่มี default/auto)
   const set = (k, v) => setD(p => ({ ...p, [k]: v }))
   const setMeta = (k, v) => setD(p => ({ ...p, meta: { ...p.meta, [k]: v } }))
   const isNew = !initial._id
   const cat = d.category
 
   return (
-    <div style={{ ...S.card, background: 'rgba(255,184,0,0.05)' }}>
+    <div>
       <div style={S.grid2}>
         <label style={{ display: 'block' }}>
           <span style={S.label}>ประเภท (category)</span>
@@ -110,7 +184,8 @@ function DeviceForm({ initial, roomId, onSave, onCancel }) {
             {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
           </select>
         </label>
-        {isNew && <Field label="deviceId (เฉพาะ/ห้ามซ้ำ)" value={d.deviceId} onChange={v => set('deviceId', v)} placeholder="เช่น cam_101" />}
+        {/* กล้อง: deviceId auto จาก camId → ไม่ต้องกรอก (ย้ายไปขั้นสูง) */}
+        {isNew && cat !== 'camera' && <Field label="deviceId (เฉพาะ/ห้ามซ้ำ)" value={d.deviceId} onChange={v => set('deviceId', v)} placeholder="เช่น cam_101" />}
         <Field label="ชื่อ (label)" value={d.label} onChange={v => set('label', v)} placeholder="ชื่ออุปกรณ์" />
 
         {cat === 'meter' && <>
@@ -137,22 +212,30 @@ function DeviceForm({ initial, roomId, onSave, onCancel }) {
           })} placeholder="เช่น 101" />
           <Field label="rtspUrl (ให้ relay ดึงภาพ — ไม่ต้อง hardcode)" value={d.meta?.rtspUrl} onChange={v => setMeta('rtspUrl', v)} placeholder="rtsp://user:pass@ip:554/..." />
           <label style={{ display: 'block' }}>
-            <span style={S.label}>streamKind (วิธีดูฝั่งหน้าเว็บ)</span>
-            <select style={S.input} value={d.meta?.streamKind || 'ws'} onChange={e => setMeta('streamKind', e.target.value)}>
-              <option value="ws">ws (cctv)</option>
-              <option value="mjpeg">mjpeg (api-gateway)</option>
-            </select>
-          </label>
-          <Field label="wsUrl (auto จาก camId — แก้เองได้)" value={d.meta?.wsUrl} onChange={v => setMeta('wsUrl', v)} placeholder="wss://.../ws/stream?cam=101" />
-          <Field label="FPS (relay, ว่าง=15)" type="number" value={d.meta?.fps} onChange={v => setMeta('fps', v)} placeholder="15" />
-          <Field label="JPEG quality (relay, ว่าง=40)" type="number" value={d.meta?.jpegQuality} onChange={v => setMeta('jpegQuality', v)} placeholder="40" />
-          <label style={{ display: 'block' }}>
             <span style={S.label}>ตรวจจับคน (นับ + % พื้นที่ → heatmap/เกจ)</span>
             <select style={S.input} value={d.meta?.detect ? '1' : '0'} onChange={e => setMeta('detect', e.target.value === '1')}>
               <option value="0">ปิด</option>
               <option value="1">เปิด</option>
             </select>
           </label>
+
+          {/* ── ตั้งค่าขั้นสูง (มี default/auto อยู่แล้ว ไม่ต้องกรอกก็ได้) ── */}
+          <button type="button" style={{ ...S.btnGhost, gridColumn: '1 / -1', textAlign: 'left', marginTop: 4 }} onClick={() => setAdv(a => !a)}>
+            {adv ? '▾' : '▸'} ตั้งค่าขั้นสูง (deviceId, สตรีม, FPS) — ไม่กรอกก็ได้ ระบบเติมให้
+          </button>
+          {adv && <>
+            {isNew && <Field label="deviceId (ว่าง = auto: cam_<camId>)" value={d.deviceId} onChange={v => set('deviceId', v)} placeholder={d.meta?.camId ? `cam_${d.meta.camId}` : 'เช่น cam_101'} />}
+            <label style={{ display: 'block' }}>
+              <span style={S.label}>streamKind (วิธีดูฝั่งหน้าเว็บ)</span>
+              <select style={S.input} value={d.meta?.streamKind || 'ws'} onChange={e => setMeta('streamKind', e.target.value)}>
+                <option value="ws">ws (cctv)</option>
+                <option value="mjpeg">mjpeg (api-gateway)</option>
+              </select>
+            </label>
+            <Field label="wsUrl (auto จาก camId — แก้เองได้)" value={d.meta?.wsUrl} onChange={v => setMeta('wsUrl', v)} placeholder="wss://.../ws/stream?cam=101" />
+            <Field label="FPS (relay, ว่าง=15)" type="number" value={d.meta?.fps} onChange={v => setMeta('fps', v)} placeholder="15" />
+            <Field label="JPEG quality (relay, ว่าง=40)" type="number" value={d.meta?.jpegQuality} onChange={v => setMeta('jpegQuality', v)} placeholder="40" />
+          </>}
         </>}
         {cat === 'sensor' && <>
           <label style={{ display: 'block' }}>
@@ -173,6 +256,8 @@ function DeviceForm({ initial, roomId, onSave, onCancel }) {
           if (cat === 'camera') {
             const meta = { ...dd.meta }
             if (!meta.streamKind) meta.streamKind = 'ws'                  // default ws (กันค่าว่าง)
+            // deviceId ว่าง → auto จาก camId (cam_<camId>)
+            if (isNew && !dd.deviceId && meta.camId) dd.deviceId = `cam_${meta.camId}`
             // กันลืม: กล้อง ws ที่มี camId แต่ wsUrl ว่าง → เติม auto ให้ตอนบันทึก
             if (meta.streamKind === 'ws' && meta.camId && !meta.wsUrl)
               meta.wsUrl = `${CCTV_WS_BASE}?cam=${encodeURIComponent(meta.camId)}`
@@ -259,20 +344,47 @@ export default function Settings() {
     catch (e) { toast(e.message, true) }
   }
 
+  // ── สรุปจำนวนสำหรับการ์ดด้านบน ───────────────────────────────────
+  const allDevices = rooms.flatMap(r => r.devices || [])
+  const totalDevices = allDevices.length
+  const activeDevices = allDevices.filter(d => d.status === 'active').length
+  const offlineDevices = totalDevices - activeDevices
+  const camCount = allDevices.filter(d => d.category === 'camera').length
+  const pct = (n, d) => d ? Math.round((n / d) * 100) : 0
+
   return (
     <div style={S.page}>
+      <style>{`@keyframes momayPulse { 0%,100% { opacity: 1; transform: scale(1) } 50% { opacity: 0.35; transform: scale(0.7) } }`}</style>
       <div style={S.wrap}>
-        <h1 style={S.h1}>⚙ ตั้งค่ากลาง — ห้อง & อุปกรณ์</h1>
-        <div style={S.sub}>จัดการห้องและอุปกรณ์ (มิเตอร์ / สวิตช์ / IR remote / กล้อง) · API: {API}</div>
+        {/* header — title + actions */}
+        <div style={S.headRow}>
+          <div>
+            <h1 style={S.h1}>Momay Settings</h1>
+            <div style={S.sub}>จัดการห้องและอุปกรณ์ (มิเตอร์ / สวิตช์ / IR remote / กล้อง) · API: {API}</div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button style={S.btnGhost} onClick={load}>↻ รีเฟรช</button>
+            <button style={S.btn} onClick={() => { setAddingRoom(true); setEditRoom(null) }}>+ เพิ่มห้อง</button>
+          </div>
+        </div>
 
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-          <button style={S.btn} onClick={() => { setAddingRoom(true); setEditRoom(null) }}>+ เพิ่มห้อง</button>
-          <button style={S.btnGhost} onClick={load}>↻ รีเฟรช</button>
+        {/* summary stat cards */}
+        <div style={S.statGrid}>
+          <StatCard color="#FFB800" label="ห้องทั้งหมด" value={rooms.length}
+            sub={`${camCount} กล้อง · ${totalDevices} อุปกรณ์รวม`} />
+          <StatCard color="#60a5fa" label="อุปกรณ์ทั้งหมด" value={totalDevices}
+            sub={<span><span style={{ ...S.badge, background: 'rgba(96,165,250,0.15)', color: '#60a5fa' }}>{pct(activeDevices, totalDevices)}%</span>ออนไลน์</span>} />
+          <StatCard color="#10b981" label="กำลังทำงาน" value={activeDevices}
+            sub={<span><span style={{ ...S.badge, background: 'rgba(16,185,129,0.15)', color: '#10b981' }}>{pct(activeDevices, totalDevices)}%</span>ของทั้งหมด</span>} />
+          <StatCard color="#ef4444" alert label="ออฟไลน์ / รอตรวจ" value={offlineDevices}
+            sub={<span><span style={{ ...S.badge, background: 'rgba(239,68,68,0.2)', color: '#f87171', fontWeight: 800 }}>{pct(offlineDevices, totalDevices)}%</span>ของทั้งหมด</span>} />
         </div>
 
         {addingRoom && (
-          <RoomForm initial={{ roomId: '', label: '', shortLabel: '', order: rooms.length, kind: 'room', img: '', heatmap: '' }}
-            onSave={saveRoom} onCancel={() => setAddingRoom(false)} />
+          <Modal title="เพิ่มห้องใหม่" onClose={() => setAddingRoom(false)}>
+            <RoomForm initial={{ roomId: '', label: '', shortLabel: '', order: rooms.length, kind: 'room', img: '', heatmap: '' }}
+              onSave={saveRoom} onCancel={() => setAddingRoom(false)} />
+          </Modal>
         )}
 
         {loading && <div style={{ color: '#888' }}>กำลังโหลด…</div>}
@@ -283,61 +395,92 @@ export default function Settings() {
 
         {rooms.map(room => (
           <div key={room.roomId} style={S.card}>
-            {editRoom === room.roomId ? (
-              <RoomForm initial={room} onSave={saveRoom} onCancel={() => setEditRoom(null)} />
-            ) : (
-              <div style={S.roomHd}>
-                <span style={{ fontSize: 16, fontWeight: 800, color: '#fff' }}>{room.label || room.roomId}</span>
-                <span style={S.tag}>{room.shortLabel}</span>
-                {room.kind === 'building' && <span style={{ ...S.tag, background: 'rgba(59,130,246,0.15)', color: '#60a5fa' }}>รวมอาคาร</span>}
-                <span style={{ color: '#666', fontSize: 11 }}>order {room.order}</span>
-                <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-                  <button style={S.btnGhost} onClick={() => { setEditRoom(room.roomId); setAddingRoom(false) }}>แก้ไข</button>
-                  <button style={S.btnDanger} onClick={() => deleteRoom(room)}>ลบห้อง</button>
-                </div>
+            <div style={S.roomHd}>
+              <span style={{ fontSize: 16, fontWeight: 800, color: '#fff' }}>{room.label || room.roomId}</span>
+              <span style={S.tag}>{room.shortLabel}</span>
+              {room.kind === 'building' && <span style={{ ...S.tag, background: 'rgba(59,130,246,0.15)', color: '#60a5fa' }}>รวมอาคาร</span>}
+              <span style={{ ...S.tag, background: 'rgba(255,255,255,0.06)', color: '#aaa' }}>{(room.devices || []).length} อุปกรณ์</span>
+              <span style={{ color: '#666', fontSize: 11 }}>order {room.order}</span>
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                <button style={S.btnGhost} onClick={() => setEditRoom(room.roomId)}>แก้ไข</button>
+                <button style={S.btnDanger} onClick={() => deleteRoom(room)}>ลบห้อง</button>
               </div>
-            )}
+            </div>
 
-            {/* devices */}
-            <div style={{ marginTop: 12 }}>
-              {(room.devices || []).map(dev => (
-                deviceForm && deviceForm.device?._id === dev._id ? (
-                  <DeviceForm key={dev._id} initial={dev} roomId={room.roomId} onSave={saveDevice} onCancel={() => setDeviceForm(null)} />
-                ) : (
-                  <div key={dev._id}>
-                    <div style={S.devRow}>
-                      <span style={S.tag}>{catLabel(dev.category)}</span>
-                      <span style={{ color: '#ddd', fontSize: 13 }}>{dev.label || dev.deviceId}</span>
-                      <span style={{ color: '#666', fontSize: 11 }}>{dev.deviceId}</span>
-                      <span style={{ color: dev.status === 'active' ? '#10b981' : '#f59e0b', fontSize: 11 }}>{dev.status}</span>
-                      <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-                        <button style={S.btnGhost} onClick={() => setDeviceForm({ roomId: room.roomId, device: dev })}>แก้</button>
-                        <button style={S.btnDanger} onClick={() => deleteDevice(dev)}>ลบ</button>
+            {/* devices — การ์ดย่อยต่ออุปกรณ์ */}
+            <div>
+              <div style={S.devGrid}>
+                {(room.devices || []).map(dev => {
+                  const m = catMeta(dev.category)
+                  const isActive = dev.status === 'active'
+                  const isOffline = dev.status === 'offline'
+                  const stColor = isActive ? '#10b981' : isOffline ? '#ef4444' : '#f59e0b'
+                  const camUrl = dev.category === 'camera' && camViewerUrl(dev)
+                  return (
+                    <div key={dev._id} style={{ ...S.devCard, borderLeft: `3px solid ${m.color}` }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ color: '#eee', fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dev.label || dev.deviceId}</div>
+                        <div style={{ color: '#777', fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dev.deviceId}</div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ ...S.tag, background: `${m.color}1f`, color: m.color }}>{catLabel(dev.category)}</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: stColor }}>
+                          <span style={{ ...S.statusDot, background: stColor }} />
+                          {dev.status || 'unknown'}
+                        </span>
+                      </div>
+                      {/* offline → เหตุผล + คำแนะนำ */}
+                      {isOffline && dev.statusReason && (
+                        <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 10, padding: '8px 10px', fontSize: 11, lineHeight: 1.5 }}>
+                          <div style={{ color: '#f87171', fontWeight: 700 }}>⚠ {dev.statusReason}</div>
+                          {dev.statusHint && <div style={{ color: '#cbb' }}>💡 {dev.statusHint}</div>}
+                        </div>
+                      )}
+                      {camUrl && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
+                          <a href={camUrl} target="_blank" rel="noreferrer" style={{ color: '#60a5fa', textDecoration: 'none', fontWeight: 600 }}>🔗 เปิดดูกล้อง</a>
+                          <button style={{ ...S.miniBtn, flex: 'none', padding: '3px 8px' }} onClick={() => { navigator.clipboard?.writeText(camUrl); toast('คัดลอกลิงก์แล้ว') }}>คัดลอกลิงก์</button>
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', gap: 6, marginTop: 'auto' }}>
+                        <button style={S.miniBtn} onClick={() => setDeviceForm({ roomId: room.roomId, device: dev })}>แก้ไข</button>
+                        <button style={S.miniDanger} onClick={() => deleteDevice(dev)}>ลบ</button>
                       </div>
                     </div>
-                    {dev.category === 'camera' && camViewerUrl(dev) && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 0 8px 4px', fontSize: 11, flexWrap: 'wrap' }}>
-                        <span style={{ color: '#888' }}>🔗 ลิงก์ดูกล้อง:</span>
-                        <a href={camViewerUrl(dev)} target="_blank" rel="noreferrer" style={{ color: '#60a5fa', wordBreak: 'break-all' }}>{camViewerUrl(dev)}</a>
-                        <button style={S.btnGhost} onClick={() => { navigator.clipboard?.writeText(camViewerUrl(dev)); toast('คัดลอกลิงก์แล้ว') }}>คัดลอก</button>
-                        <a href={camViewerUrl(dev)} target="_blank" rel="noreferrer" style={{ ...S.btn, textDecoration: 'none' }}>เปิดดู</a>
-                      </div>
-                    )}
-                  </div>
-                )
-              ))}
+                  )
+                })}
 
-              {deviceForm && deviceForm.roomId === room.roomId && !deviceForm.device?._id && (
-                <DeviceForm initial={{}} roomId={room.roomId} onSave={saveDevice} onCancel={() => setDeviceForm(null)} />
-              )}
-
-              <button style={{ ...S.btnGhost, marginTop: 8 }} onClick={() => setDeviceForm({ roomId: room.roomId, device: {} })}>+ เพิ่มอุปกรณ์</button>
+                {/* การ์ด “เพิ่มอุปกรณ์” */}
+                <button style={{ ...S.devCard, alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#FFB800', border: '1px dashed rgba(255,184,0,0.35)', background: 'rgba(255,184,0,0.04)', fontSize: 13, fontWeight: 700, minHeight: 96 }}
+                  onClick={() => setDeviceForm({ roomId: room.roomId, device: {} })}>
+                  + เพิ่มอุปกรณ์
+                </button>
+              </div>
             </div>
           </div>
         ))}
 
         {!loading && !rooms.length && !err && <div style={{ color: '#888' }}>ยังไม่มีห้อง — กด “เพิ่มห้อง”</div>}
       </div>
+
+      {/* popup: แก้ไขห้อง */}
+      {editRoom && (() => {
+        const room = rooms.find(r => r.roomId === editRoom)
+        if (!room) return null
+        return (
+          <Modal title={`แก้ไขห้อง — ${room.label || room.roomId}`} onClose={() => setEditRoom(null)}>
+            <RoomForm initial={room} onSave={saveRoom} onCancel={() => setEditRoom(null)} />
+          </Modal>
+        )
+      })()}
+
+      {/* popup: เพิ่ม/แก้ไขอุปกรณ์ */}
+      {deviceForm && (
+        <Modal title={deviceForm.device?._id ? `แก้ไขอุปกรณ์ — ${deviceForm.device.label || deviceForm.device.deviceId}` : 'เพิ่มอุปกรณ์ใหม่'}
+          onClose={() => setDeviceForm(null)}>
+          <DeviceForm initial={deviceForm.device || {}} roomId={deviceForm.roomId} onSave={saveDevice} onCancel={() => setDeviceForm(null)} />
+        </Modal>
+      )}
     </div>
   )
 }

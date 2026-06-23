@@ -24,14 +24,21 @@ app.use('/api',          require('./routes/bookings'));   // /api/bookings, /api
 // Combined config: rooms + อุปกรณ์ของแต่ละห้อง (ให้ dashboard ดึงครั้งเดียว)
 const Room   = require('./models/room');
 const Device = require('./models/device');
+const { evaluate } = require('./services/deviceStatus');
 app.get('/api/config', async (_req, res) => {
   try {
     const [rooms, devices] = await Promise.all([
       Room.find().sort({ order: 1, createdAt: 1 }).lean(),
       Device.find().lean(),
     ]);
+    // คำนวณสถานะจริงจากความสด (lastSeen) + แนบเหตุผล/คำแนะนำเมื่อ offline
+    const now = Date.now();
+    const withStatus = d => {
+      const { status, reason, hint } = evaluate(d, now);
+      return { ...d, status, statusReason: reason || null, statusHint: hint || null };
+    };
     const byRoom = {};
-    for (const d of devices) (byRoom[d.room] ||= []).push(d);
+    for (const d of devices) (byRoom[d.room] ||= []).push(withStatus(d));
     res.json({
       ok: true,
       rooms: rooms.map(r => ({ ...r, devices: byRoom[r.roomId] || [] })),
@@ -75,6 +82,10 @@ function start() {
   // Auto control (booking → เปิด/ปิดสวิตช์) — ยุบมาจาก Control
   try { require('./services/autoControl').init(); }
   catch (e) { console.error('[auto] init failed (non-fatal):', e.message); }
+
+  // Meter heartbeat poller (อัปเดต lastSeen/สถานะมิเตอร์จาก backend)
+  try { require('./services/meterPoll').init(); }
+  catch (e) { console.error('[meterPoll] init failed (non-fatal):', e.message); }
 }
 
 start();
