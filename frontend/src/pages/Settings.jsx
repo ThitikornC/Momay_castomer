@@ -501,9 +501,9 @@ export default function Settings() {
                 )
               })}
 
-              {/* การ์ด “เพิ่มอุปกรณ์” — แยกแถวล่างสุด */}
-              <div style={{ ...S.devGrid, marginTop: 12 }}>
-                <button style={{ ...S.devCard, alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#FFB800', border: '1px dashed rgba(255,184,0,0.35)', background: 'rgba(255,184,0,0.04)', fontSize: 12, fontWeight: 700, minHeight: 64 }}
+              {/* ปุ่ม “เพิ่มอุปกรณ์” — มุมขวาล่าง */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+                <button style={{ cursor: 'pointer', color: '#FFB800', border: '1px dashed rgba(255,184,0,0.45)', background: 'rgba(255,184,0,0.06)', borderRadius: 10, padding: '8px 16px', fontSize: 13, fontWeight: 700 }}
                   onClick={() => setDeviceForm({ roomId: room.roomId, device: {} })}>
                   + เพิ่มอุปกรณ์
                 </button>
