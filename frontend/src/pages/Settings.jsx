@@ -75,8 +75,8 @@ const S = {
   devCard:{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 },
   statusDot:{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0 },
   // ปุ่มเล็กในการ์ดอุปกรณ์
-  miniBtn:{ cursor: 'pointer', border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.04)', color: '#bbb', borderRadius: 8, padding: '5px 12px', fontSize: 12, fontWeight: 600, flex: 1 },
-  miniDanger:{ cursor: 'pointer', border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)', color: '#ef4444', borderRadius: 8, padding: '5px 12px', fontSize: 12, fontWeight: 700, flex: 1 },
+  miniBtn:{ cursor: 'pointer', border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.04)', color: '#aaa', borderRadius: 7, padding: '3px 10px', fontSize: 11, fontWeight: 600 },
+  miniDanger:{ cursor: 'pointer', border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.08)', color: '#ef4444', borderRadius: 7, padding: '3px 10px', fontSize: 11, fontWeight: 600 },
   // popup modal
   overlay:{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px' },
   modal:  { width: '100%', maxWidth: 760, maxHeight: 'calc(100vh - 48px)', overflowY: 'auto', background: '#120516', border: '1px solid rgba(255,184,0,0.22)', borderRadius: 18, padding: 18, boxShadow: '0 24px 60px rgba(0,0,0,0.6)' },
