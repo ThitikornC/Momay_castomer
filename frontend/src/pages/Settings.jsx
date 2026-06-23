@@ -471,8 +471,9 @@ export default function Settings() {
 
         {rooms.map(room => (
           <div key={room.roomId} style={S.card}>
-            <div style={S.roomHd}>
-              <span style={{ fontSize: 16, fontWeight: 800, color: '#fff' }}>{room.label || room.roomId}</span>
+            <div style={{ ...S.roomHd, paddingBottom: 12, marginBottom: 4, borderBottom: '1px solid rgba(255,184,0,0.15)' }}>
+              <span style={{ width: 5, height: 24, borderRadius: 3, background: 'linear-gradient(180deg,#FFB800,#ff9500)', boxShadow: '0 0 10px rgba(255,184,0,0.5)' }} />
+              <span style={{ fontSize: 21, fontWeight: 900, color: '#fff', letterSpacing: 0.3, textShadow: '0 1px 8px rgba(255,184,0,0.25)' }}>{room.label || room.roomId}</span>
               <span style={S.tag}>{room.shortLabel}</span>
               {room.kind === 'building' && <span style={{ ...S.tag, background: 'rgba(59,130,246,0.15)', color: '#60a5fa' }}>รวมอาคาร</span>}
               <span style={{ ...S.tag, background: 'rgba(255,255,255,0.06)', color: '#aaa' }}>{(room.devices || []).length} อุปกรณ์</span>
