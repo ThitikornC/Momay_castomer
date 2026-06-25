@@ -363,23 +363,14 @@ function PixelSkeleton({ show }) {
   )
 }
 
-// TODO: ใส่ URL + device ของ "มิเตอร์รวมทั้งอาคาร" จริง (ตอนนี้เป็น placeholder)
-const BUILDING_API = 'https://your-building-meter.up.railway.app'
+// มิเตอร์รวมทั้งอาคาร — ใช้ backend ไฟฟ้า metera-production
+const BUILDING_API = 'https://metera-production.up.railway.app'
 
 // ค่า default (fallback) ใช้เมื่อโหลด config จาก gateway ไม่ได้ — ปกติจะถูกแทนด้วยข้อมูลจาก /api/config
 let BUU_ROOMS = [
   { id: 'ทั้งอาคาร', label: 'ทั้งอาคาร', shortLabel: 'รวม',
     img: '/Floorplan/Floor4plan.png', heatmap: '/Floorplan/HeatmapgridFloor4.svg',
     apiBase: BUILDING_API, device: 'pm_building' },
-  { id: 'ห้อง101โถงชั้น1', label: 'ห้อง 101', shortLabel: '101',
-    img: '/Floorplan/Floor1plan.png', heatmap: '/Floorplan/HeatmapgridFloor1.svg',
-    apiBase: 'https://momatdeerbn-production.up.railway.app', device: 'pm_deer' },
-  { id: 'ห้อง200', label: 'ห้อง 200', shortLabel: '200',
-    img: '/Floorplan/Floor2plan.png', heatmap: '/Floorplan/HeatmapgridFloor2.svg',
-    apiBase: 'https://momaysandbn-production.up.railway.app', device: 'pm_sand' },
-  { id: 'ห้อง300', label: 'ห้อง 300', shortLabel: '300',
-    img: '/Floorplan/Floor3plan.png', heatmap: '/Floorplan/HeatmapgridFloor3.svg',
-    apiBase: 'https://momaysandbn-production.up.railway.app', device: 'pm_sand' },
 ]
 let FLOORS = BUU_ROOMS
 
@@ -387,8 +378,11 @@ let FLOORS = BUU_ROOMS
 const DEVICES_API = (import.meta.env.VITE_DEVICES_API || 'http://localhost:8002').replace(/\/$/, '')
 
 // map rooms จาก /api/config → รูปแบบที่ dashboard ใช้ (id/apiBase/device จาก meter device)
+// เวอร์ชันนี้: เหลือเฉพาะ "ทั้งอาคาร" — กรองห้องอื่น (101/200/300) ออก แม้ gateway DB ยังมีอยู่
 function mapConfigRooms(apiRooms) {
-  return apiRooms.map(r => {
+  return apiRooms
+    .filter(r => r.kind === 'building' || r.roomId === 'ทั้งอาคาร')
+    .map(r => {
     const meter = (r.devices || []).find(d => d.category === 'meter')
     return {
       id: r.roomId,
@@ -509,7 +503,7 @@ function TotalTrackCard({ people }) {
 }
 
 // ── Momay shared helpers (ported exactly from script.js) ─────────────────
-const MOMAY_API = 'https://momatdeerbn-production.up.railway.app'
+const MOMAY_API = 'https://metera-production.up.railway.app'
 
 function _localDateStr(d) {
   const y = d.getFullYear()
@@ -1301,25 +1295,11 @@ function MomayBookingPopup({ open, onClose, room }) {
     return bookings.find(b => b.startTime <= slot && slot < b.endTime)
   }
 
+  // ระบบจองถูกตัดออกตามสเปก — เก็บฟอร์ม/ปุ่ม UI ไว้ แต่ไม่ส่งคำสั่งจองจริง
   async function handleConfirm() {
     if (!name.trim()) { setError('กรุณากรอกชื่อผู้จอง'); return }
     if (startTime >= endTime) { setError('เวลาเริ่มต้องน้อยกว่าเวลาสิ้นสุด'); return }
-    setBusy(true); setError('')
-    try {
-      const res = await fetch(`${DEVICES_API}/api/bookings`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ room, date, startTime, endTime, bookerName: name.trim(), purpose: purpose.trim() }),
-      })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error || 'เกิดข้อผิดพลาด')
-      setBookings(prev => [...prev, json.data])
-      setName(''); setPurpose(''); setError('')
-      setCreated(json.data)   // → โชว์ QR เช็คอิน (ไม่ปิด popup ทันที)
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setBusy(false)
-    }
+    setError('ระบบจองถูกปิดใช้งานในเวอร์ชันนี้')
   }
 
   const inp = { background: '#1a1a1a', border: '1px solid rgba(255,184,0,0.35)', borderRadius: 6, color: '#e8c97a', padding: '5px 8px', fontSize: 12, width: '100%', outline: 'none' }
@@ -1844,23 +1824,10 @@ function MomayStatusRow({ room, devices = [] }) {
     return `${hh}:${mm}:${ss}`
   })()
 
-  // ── Bulb toggle → ถ้ามี switch device ใน registry ใช้ gateway, ไม่งั้น fallback momaybuu ──
+  // ── Bulb toggle → คำสั่งคุมไฟถูกตัดออกตามสเปก (เก็บปุ่ม/UI ไว้ ไม่ส่งคำสั่งจริง) ──
   async function toggleBulb() {
     const next = !bulb
-    setBulb(next)   // optimistic — light only
-    try {
-      if (switchDev) {
-        await fetch(`${DEVICES_API}/api/tasmota/${encodeURIComponent(switchDev.deviceId)}/power`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ state: next }),
-        })
-      } else {
-        await fetch(`${MOMAY_SERVER}/api/toggle-device`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ room: ROOM, action: next ? 'ON' : 'OFF' }),
-        })
-      }
-    } catch { /* ignore */ }
+    setBulb(next)   // optimistic UI อย่างเดียว — ไม่ส่งคำสั่งคุมไฟ
   }
 
   // ดึงสถานะจริงของสวิตช์จาก gateway (มาจาก MQTT stat/POWER → meta.relay)
@@ -1876,50 +1843,16 @@ function MomayStatusRow({ room, devices = [] }) {
     } catch { return undefined }
   }
 
-  // ── Toggle สวิตช์รายตัว — สั่งแล้ว "รอ MQTT ยืนยันจริง" ก่อนค่อยแสดงไฟติด/ดับ (ไม่ optimistic) ──
+  // ── Toggle สวิตช์รายตัว — คำสั่งคุมสวิตช์ถูกตัดออกตามสเปก (เก็บปุ่ม/UI ไว้ ไม่ส่งคำสั่งจริง) ──
   async function toggleSwitch(dev) {
     const id = dev.deviceId
-    if (switchPending[id]) return
-    const target = !(switchStates[id] === true)   // currently ON → OFF, ไม่งั้น → ON
-    setSwitchPending(p => ({ ...p, [id]: true }))
-    try {
-      await fetch(`${DEVICES_API}/api/tasmota/${encodeURIComponent(id)}/power`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ state: target }),
-      })
-      // poll ถี่รอ stat/POWER จริง (สูงสุด ~6s) — เปลี่ยน UI เมื่อยืนยันได้เท่านั้น
-      for (let i = 0; i < 10; i++) {
-        await new Promise(r => setTimeout(r, 600))
-        const st = await _fetchSwitchState(id)
-        if (st !== undefined) {
-          setSwitchStates(s => ({ ...s, [id]: st }))
-          if (st === target) break
-        }
-      }
-    } catch { /* ignore */ }
-    finally {
-      setSwitchPending(p => { const n = { ...p }; delete n[id]; return n })
-    }
+    const target = !(switchStates[id] === true)
+    setSwitchStates(s => ({ ...s, [id]: target }))   // optimistic UI อย่างเดียว — ไม่ส่งคำสั่งคุมสวิตช์
   }
 
-  // ── AC command → ถ้ามี ir-remote device ใช้ gateway/tuya, ไม่งั้น fallback momaybuu ──
+  // ── AC command → คำสั่งคุมแอร์ถูกตัดออกตามสเปก (เก็บปุ่ม/UI ไว้ ไม่ส่งคำสั่งจริง) ──
   async function sendAcCommand(overrides = {}) {
-    const next = { ...acState, ...overrides }
-    setAcState(s => ({ ...s, ...overrides }))
-    setAcSending(true)
-    try {
-      if (irDev) {
-        await fetch(`${DEVICES_API}/api/tuya/${encodeURIComponent(irDev.deviceId)}/ir/ac`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ remoteId: irDev.meta?.remoteId, power: 1, swing: 0, ...next }),
-        })
-      } else {
-        await fetch(`${MOMAY_SERVER}/api/ac-command`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ room: ROOM, swing: 0, ...next }),
-        })
-      }
-    } catch { /* ignore */ } finally { setAcSending(false) }
+    setAcState(s => ({ ...s, ...overrides }))   // optimistic UI อย่างเดียว — ไม่ส่งคำสั่งคุมแอร์
   }
 
   // ── CCTV — ใช้ camera device จาก registry (mjpeg ผ่าน api-gateway / ws) ไม่งั้น default ──
@@ -3268,7 +3201,8 @@ function MomayRelationshipLayerInner() {
         <MomayBillPanel todayBill={energyToday} yesterdayBill={energyYesterday} apiBase={BUU_ROOMS[selectedFloor]?.apiBase ?? MOMAY_API} />
       </div>
 
-      {/* ══ Bottom row — Layer 1 + Layer 2 ══ */}
+      {/* ══ Bottom row — Layer 1 + Layer 2 ══ (ซ่อนไว้ — เปิดกลับโดยลบ comment) */}
+      {/*
       <div className="w-full grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="rounded-2xl overflow-hidden" style={{ border: '2px solid #1f7a68' }}>
           <div style={{ zoom: 0.72 }}>
@@ -3281,6 +3215,7 @@ function MomayRelationshipLayerInner() {
           </div>
         </div>
       </div>
+      */}
     </div>
   )
 }

@@ -3,7 +3,8 @@
  *   node seed.js
  *
  * - ลบ Tasmota ที่ auto-register แบบ pending ทิ้ง (กรณีเผลอต่อ public broker)
- * - สร้าง/อัปเดต 4 ห้อง (ทั้งอาคาร, 101, 200, 300) + meter device ของแต่ละห้อง
+ * - สร้าง/อัปเดต ห้อง (เวอร์ชันนี้: เฉพาะ "ทั้งอาคาร") + meter device ของแต่ละห้อง
+ * - ลบห้อง/มิเตอร์เก่าที่ไม่อยู่ในลิสต์ทิ้ง (เช่น 101/200/300)
  * - สร้าง switch device (ยุบจาก Control ROOM_DEVICE_MAP)
  */
 require('dotenv').config();
@@ -14,16 +15,7 @@ const Device = require('./models/device');
 const ROOMS = [
   { roomId: 'ทั้งอาคาร', label: 'ทั้งอาคาร', shortLabel: 'รวม', order: 0, kind: 'building',
     img: '/Floorplan/Floor4plan.png', heatmap: '/Floorplan/HeatmapgridFloor4.svg',
-    meter: { apiBase: 'https://your-building-meter.up.railway.app', source: 'pm_building' } },
-  { roomId: 'ห้อง101โถงชั้น1', label: 'ห้อง 101', shortLabel: '101', order: 1, kind: 'room',
-    img: '/Floorplan/Floor1plan.png', heatmap: '/Floorplan/HeatmapgridFloor1.svg',
-    meter: { apiBase: 'https://momatdeerbn-production.up.railway.app', source: 'pm_101' } },
-  { roomId: 'ห้อง200', label: 'ห้อง 200', shortLabel: '200', order: 2, kind: 'room',
-    img: '/Floorplan/Floor2plan.png', heatmap: '/Floorplan/HeatmapgridFloor2.svg',
-    meter: { apiBase: 'https://momaysandbn-production.up.railway.app', source: 'pm_200' } },
-  { roomId: 'ห้อง300', label: 'ห้อง 300', shortLabel: '300', order: 3, kind: 'room',
-    img: '/Floorplan/Floor3plan.png', heatmap: '/Floorplan/HeatmapgridFloor3.svg',
-    meter: { apiBase: 'https://momaysandbn-production.up.railway.app', source: 'pm_300' } },
+    meter: { apiBase: 'https://metera-production.up.railway.app', source: 'pm_building' } },
 ];
 
 // switch devices (ยุบจาก Control ROOM_DEVICE_MAP) — channel ว่าง = รีเลย์เดียว (Power)
@@ -51,6 +43,13 @@ async function main() {
     );
     console.log(`[seed] room "${room.roomId}" + meter ok`);
   }
+
+  // ลบห้อง/มิเตอร์เก่าที่ไม่อยู่ในลิสต์ ROOMS แล้ว (เช่น 101/200/300 ใน version ก่อน)
+  const keepRoomIds = ROOMS.map(r => r.roomId);
+  const keepMeterIds = ROOMS.map(r => `meter_${r.roomId}`);
+  const delRooms = await Room.deleteMany({ roomId: { $nin: keepRoomIds } });
+  const delMeters = await Device.deleteMany({ category: 'meter', deviceId: { $nin: keepMeterIds } });
+  console.log(`[seed] pruned ${delRooms.deletedCount} old rooms, ${delMeters.deletedCount} old meters`);
 
   for (const s of SWITCHES) {
     await Device.updateOne(
