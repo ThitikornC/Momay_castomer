@@ -15,6 +15,13 @@ const Device = require('./models/device');
 const ROOMS = [
   { roomId: 'ทั้งอาคาร', label: 'ทั้งอาคาร', shortLabel: 'รวม', order: 0, kind: 'building',
     img: '/Floorplan/Floor4plan.png', heatmap: '/Floorplan/HeatmapgridFloor4.svg',
+    info: {
+      siteName: 'สำนักหอสมุด ม.บูรพา',
+      userNumber: 'No.014',
+      contractNumber: '-',
+      dateInstalled: '15-05-26',
+      contractExpiry: '-',
+    },
     meter: { apiBase: 'https://metera-production.up.railway.app', source: 'pm_building' } },
 ];
 

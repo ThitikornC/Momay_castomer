@@ -370,7 +370,7 @@ const BUILDING_API = 'https://metera-production.up.railway.app'
 let BUU_ROOMS = [
   { id: 'ทั้งอาคาร', label: 'ทั้งอาคาร', shortLabel: 'รวม',
     img: '/Floorplan/Floor4plan.png', heatmap: '/Floorplan/HeatmapgridFloor4.svg',
-    apiBase: BUILDING_API, device: 'pm_building' },
+    apiBase: BUILDING_API, device: 'pm_building', info: {} },
 ]
 let FLOORS = BUU_ROOMS
 
@@ -393,6 +393,7 @@ function mapConfigRooms(apiRooms) {
       kind: r.kind,
       apiBase: (meter?.meta?.apiBase || BUILDING_API).replace(/\/+$/, ''),  // ตัด / ท้าย กัน double slash
       device: (meter?.meta?.source || 'pm_building').trim(),
+      info: r.info || {},
       devices: r.devices || [],
     }
   })
@@ -2322,28 +2323,33 @@ function MomayBillPanel({ todayBill, yesterdayBill, apiBase = MOMAY_API }) {
           days.push(d)
         }
         const fmtLabel = d => d.toLocaleDateString('th-TH', { day: '2-digit', month: 'short' })
+        // ใช้ข้อมูลรายชั่วโมงจริงจาก /solar-size แยกกลางวัน/กลางคืน (ไม่เดา 60/40 อีกต่อไป)
         const results = await Promise.all(
-          days.map(d => fetch(`${apiBase}/daily-bill?date=${_localDateStr(d)}`).then(r => r.json()).catch(() => null))
+          days.map(d => fetch(`${apiBase}/solar-size?date=${_localDateStr(d)}`).then(r => r.json()).catch(() => null))
         )
         if (cancelled || !chartRef.current) return
 
-        const labels    = days.map(fmtLabel)
-        const dayData   = results.map(r => {
-          if (!r) return null
-          // API may return day_bill, bill_day, or dayCost
-          const v = r.day_bill ?? r.bill_day ?? r.dayCost ?? null
-          if (v != null) return Number(v) || 0
-          // fall back: estimate 60% of total bill
-          const total = typeof r.electricity_bill === 'number' ? r.electricity_bill : parseFloat(r.electricity_bill) || 0
-          return total > 0 ? +(total * 0.6).toFixed(4) : null
-        })
-        const nightData = results.map(r => {
-          if (!r) return null
-          const v = r.night_bill ?? r.bill_night ?? r.nightCost ?? null
-          if (v != null) return Number(v) || 0
-          const total = typeof r.electricity_bill === 'number' ? r.electricity_bill : parseFloat(r.electricity_bill) || 0
-          return total > 0 ? +(total * 0.4).toFixed(4) : null
-        })
+        const labels = days.map(fmtLabel)
+        // กลางคืน = 18:00–06:00, กลางวัน = 06:00–18:00 — ชั่วโมงที่ไม่มีข้อมูล (บิล 0) ไม่นับ
+        // ⇒ มิเตอร์ที่เพิ่งติดตอนบ่ายจะมี night = 0 (ไม่มีแท่งกลางคืน)
+        const NIGHT_HOURS = new Set([18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5])
+        const splitBill = (r) => {
+          const hourly = r?.hourly
+          if (!Array.isArray(hourly) || !hourly.length) return { day: null, night: null }
+          let day = 0, night = 0, has = false
+          for (const h of hourly) {
+            const bill = Number(h?.electricity_bill) || 0
+            if (bill <= 0) continue
+            has = true
+            const hr = parseInt(String(h?.hour ?? '').slice(0, 2), 10)
+            if (NIGHT_HOURS.has(hr)) night += bill; else day += bill
+          }
+          if (!has) return { day: null, night: null }
+          return { day: +day.toFixed(4), night: +night.toFixed(4) }
+        }
+        const splits    = results.map(splitBill)
+        const dayData   = splits.map(s => s.day)
+        const nightData = splits.map(s => s.night)
         setChartTitle(`${fmtLabel(days[0])} – ${fmtLabel(days[days.length - 1])}`)
 
         if (chartInst.current) chartInst.current.destroy()
@@ -2816,10 +2822,15 @@ function MomayRelationshipLayerInner() {
                 <Users size={isMobile ? 13 : 18} color="#b4823c" strokeWidth={2} />
               </div>
               <span style={{ color: '#e8c97a', fontWeight: 700, fontSize: isMobile ? 11 : 13, letterSpacing: 0.3, lineHeight: 1.2 }}>
-                สำนักหอสมุด ม.บูรพา
+                {(BUU_ROOMS[selectedFloor]?.info?.siteName) || '—'}
               </span>
             </div>
-            {[['User Number', 'No.014'], ['Contract Number', '-'], ['Date Installed', '15-05-26'], ['Contract Expiry', '-']].map(([label, value]) => (
+            {(() => { const _info = BUU_ROOMS[selectedFloor]?.info || {}; return [
+              ['User Number', _info.userNumber || '-'],
+              ['Contract Number', _info.contractNumber || '-'],
+              ['Date Installed', _info.dateInstalled || '-'],
+              ['Contract Expiry', _info.contractExpiry || '-'],
+            ] })().map(([label, value]) => (
               <div key={label} style={{ display: 'flex', gap: 3, fontSize: isMobile ? 10 : 10, lineHeight: 1.4 }}>
                 <span style={{ color: '#8a7060', whiteSpace: 'nowrap' }}>{label} :</span>
                 <span style={{ color: '#c9a96e', fontWeight: 600 }}>{value}</span>

@@ -8,6 +8,14 @@ const roomSchema = new Schema({
   kind:       { type: String, enum: ['room', 'building'], default: 'room' }, // building = การ์ดรวมทั้งอาคาร
   img:        { type: String, default: '' },                  // path รูปผัง เช่น /Floorplan/Floor1plan.png
   heatmap:    { type: String, default: '' },                  // path heatmap svg
+  // ข้อมูลลูกค้า/มิเตอร์ สำหรับการ์ดมุมซ้าย (แก้ผ่าน seed/DB ได้ ไม่ต้อง hardcode ใน frontend)
+  info: {
+    siteName:       { type: String, default: '' },            // ชื่อสถานที่ เช่น "สำนักหอสมุด ม.บูรพา"
+    userNumber:     { type: String, default: '' },            // เลขผู้ใช้ไฟ
+    contractNumber: { type: String, default: '' },            // เลขสัญญา
+    dateInstalled:  { type: String, default: '' },            // วันที่ติดตั้ง
+    contractExpiry: { type: String, default: '' },            // วันหมดสัญญา
+  },
 }, { timestamps: true });
 
 module.exports = model('GwRoom', roomSchema, 'gw_rooms');
