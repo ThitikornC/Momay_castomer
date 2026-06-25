@@ -366,6 +366,20 @@ function PixelSkeleton({ show }) {
 // มิเตอร์รวมทั้งอาคาร — ใช้ backend ไฟฟ้า metera-production
 const BUILDING_API = 'https://metera-production.up.railway.app'
 
+// รูปผัง/heatmap default — ใช้เมื่อห้องไม่ได้ตั้งค่า (ว่าง)
+const DEFAULT_PLAN_IMG     = '/Floorplan/Floor4plan.png'
+const DEFAULT_PLAN_HEATMAP = '/Floorplan/HeatmapgridFloor4.svg'
+// resolve รูปผัง/heatmap ตามลำดับ: ไฟล์อัปโหลดในเครื่อง (localStorage) → path จาก config → default
+// (เก็บใน localStorage ไม่ใช่ DB เพื่อไม่ให้ Mongo บวม — เป็นรูปเฉพาะเบราว์เซอร์นี้)
+function planImgSrc(room) {
+  try { const u = localStorage.getItem('momay_plan_' + room?.id); if (u) return u } catch {}
+  return room?.img || DEFAULT_PLAN_IMG
+}
+function planHeatmapSrc(room) {
+  try { const u = localStorage.getItem('momay_heatmap_' + room?.id); if (u) return u } catch {}
+  return room?.heatmap || DEFAULT_PLAN_HEATMAP
+}
+
 // ค่า default (fallback) ใช้เมื่อโหลด config จาก gateway ไม่ได้ — ปกติจะถูกแทนด้วยข้อมูลจาก /api/config
 let BUU_ROOMS = [
   { id: 'ทั้งอาคาร', label: 'ทั้งอาคาร', shortLabel: 'รวม',
@@ -1080,7 +1094,7 @@ function MomaySolarPopup({ open, onClose, room }) {
         style={{ position:'absolute', left:'-9999px', top:0, visibility:'hidden', opacity:0, width:600, background:'#fffef5', padding:'16px 20px', fontFamily:'sans-serif', color:'#2c1810', fontSize:13, lineHeight:1.5 }}
       >
         <img src="/images/kwang_logo_report.png" alt="Kwang Report" crossOrigin="anonymous" style={{ width:'100%', maxWidth:213, height:'auto', display:'block', marginLeft:-20 }} />
-        <p>Client Name: <span>Naresuan University Library</span></p>
+        <p>Client Name: <span>{BUU_ROOMS.find(r => r.id === room)?.info?.siteName || '—'}</span></p>
         <p>Date: <span>{dateStr}</span></p>
         <p>Electricity usage (within 1 day): <strong>{fmt2(s?.totalEnergyKwh ?? data?.totalEnergyKwh)} Unit</strong></p>
         <p style={{ paddingBottom:10 }}>Electricity Bill (within 1 day): <strong>{fmt2(s?.totalCost ?? data?.totalCost)} THB</strong></p>
@@ -3075,7 +3089,7 @@ function MomayRelationshipLayerInner() {
                     }}
                   >
                     <img
-                      src={room.img}
+                      src={planImgSrc(room)}
                       alt={room.label}
                       onLoad={() => setLoadedCount(c => c + 1)}
                       style={{
@@ -3092,7 +3106,7 @@ function MomayRelationshipLayerInner() {
                       opacity={isInactive ? 0 : (i === 0 ? 1 : 0.88)}
                     />
                     <img
-                      src={room.heatmap}
+                      src={planHeatmapSrc(room)}
                       alt=""
                       draggable={false}
                       style={{

@@ -163,6 +163,40 @@ function Field({ label, value, onChange, placeholder, type = 'text' }) {
   )
 }
 
+// ฟิลด์รูปผัง/heatmap: พิมพ์ path ก็ได้ หรืออัปโหลดไฟล์จากเครื่อง (เก็บใน localStorage ไม่ใช่ DB → ไม่ทำให้ Mongo บวม)
+// รูปที่อัปโหลดจะแสดงเฉพาะเบราว์เซอร์นี้ · ว่าง = ใช้ default
+function PlanField({ label, roomId, storeKey, pathValue, onPathChange, placeholder, accept }) {
+  const lsKey = roomId ? `${storeKey}_${roomId}` : null
+  const [hasLocal, setHasLocal] = useState(() => { try { return !!(lsKey && localStorage.getItem(lsKey)) } catch { return false } })
+  const onFile = (e) => {
+    const f = e.target.files?.[0]; e.target.value = ''
+    if (!f) return
+    if (!lsKey) { alert('กรอก roomId ก่อนอัปโหลดรูป'); return }
+    const rd = new FileReader()
+    rd.onload = () => {
+      try { localStorage.setItem(lsKey, rd.result); setHasLocal(true) }
+      catch { alert('รูปใหญ่เกินไป (localStorage เต็ม) — ลองย่อรูปก่อน') }
+    }
+    rd.readAsDataURL(f)
+  }
+  const clearLocal = () => { try { if (lsKey) localStorage.removeItem(lsKey) } catch {}; setHasLocal(false) }
+  return (
+    <div>
+      <span style={S.label}>{label}</span>
+      <input style={S.input} value={pathValue ?? ''} placeholder={placeholder} onChange={e => onPathChange(e.target.value)} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+        <label style={{ ...S.miniBtn, cursor: 'pointer' }}>📁 อัปโหลดจากเครื่อง
+          <input type="file" accept={accept} style={{ display: 'none' }} onChange={onFile} />
+        </label>
+        {hasLocal
+          ? <><span style={{ fontSize: 11, color: '#10b981' }}>✓ ใช้รูปในเครื่องนี้</span>
+              <button type="button" style={S.miniDanger} onClick={clearLocal}>ลบรูป</button></>
+          : <span style={{ fontSize: 10, color: '#777' }}>ว่าง = ใช้ default</span>}
+      </div>
+    </div>
+  )
+}
+
 // ── Room editor form ────────────────────────────────────────────────
 function RoomForm({ initial, onSave, onCancel }) {
   const [r, setR] = useState(initial)
@@ -183,8 +217,8 @@ function RoomForm({ initial, onSave, onCancel }) {
             <option value="building">building (รวมทั้งอาคาร)</option>
           </select>
         </label>
-        <Field label="รูปผัง (img)" value={r.img} onChange={v => set('img', v)} placeholder="/Floorplan/Floor4plan.png" />
-        <Field label="heatmap (svg)" value={r.heatmap} onChange={v => set('heatmap', v)} placeholder="/Floorplan/HeatmapgridFloor4.svg" />
+        <PlanField label="รูปผัง (img)" roomId={r.roomId} storeKey="momay_plan" pathValue={r.img} onPathChange={v => set('img', v)} placeholder="/Floorplan/Floor4plan.png (ว่าง=default)" accept="image/*" />
+        <PlanField label="heatmap (svg)" roomId={r.roomId} storeKey="momay_heatmap" pathValue={r.heatmap} onPathChange={v => set('heatmap', v)} placeholder="/Floorplan/HeatmapgridFloor4.svg (ว่าง=default)" accept="image/svg+xml,image/*" />
       </div>
 
       {/* ข้อมูลลูกค้า — แสดงในการ์ดมุมซ้าย + ตัววิ่ง (marquee) ของ dashboard */}
