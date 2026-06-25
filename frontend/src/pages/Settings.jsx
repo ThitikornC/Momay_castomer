@@ -167,6 +167,7 @@ function Field({ label, value, onChange, placeholder, type = 'text' }) {
 function RoomForm({ initial, onSave, onCancel }) {
   const [r, setR] = useState(initial)
   const set = (k, v) => setR(p => ({ ...p, [k]: v }))
+  const setInfo = (k, v) => setR(p => ({ ...p, info: { ...(p.info || {}), [k]: v } }))
   const isNew = !initial._id
   return (
     <div>
@@ -185,6 +186,17 @@ function RoomForm({ initial, onSave, onCancel }) {
         <Field label="รูปผัง (img)" value={r.img} onChange={v => set('img', v)} placeholder="/Floorplan/Floor4plan.png" />
         <Field label="heatmap (svg)" value={r.heatmap} onChange={v => set('heatmap', v)} placeholder="/Floorplan/HeatmapgridFloor4.svg" />
       </div>
+
+      {/* ข้อมูลลูกค้า — แสดงในการ์ดมุมซ้าย + ตัววิ่ง (marquee) ของ dashboard */}
+      <div style={{ ...S.label, marginTop: 16, marginBottom: 6, fontSize: 12, opacity: 0.9 }}>ข้อมูลลูกค้า (การ์ดมุมซ้าย / ตัววิ่ง)</div>
+      <div style={S.grid2}>
+        <Field label="ชื่อสถานที่ (siteName)" value={r.info?.siteName} onChange={v => setInfo('siteName', v)} placeholder="สำนักหอสมุด ม.บูรพา" />
+        <Field label="เลขผู้ใช้ไฟ (userNumber)" value={r.info?.userNumber} onChange={v => setInfo('userNumber', v)} placeholder="No.014" />
+        <Field label="เลขสัญญา (contractNumber)" value={r.info?.contractNumber} onChange={v => setInfo('contractNumber', v)} placeholder="-" />
+        <Field label="วันที่ติดตั้ง (dateInstalled)" value={r.info?.dateInstalled} onChange={v => setInfo('dateInstalled', v)} placeholder="15-05-26" />
+        <Field label="วันหมดสัญญา (contractExpiry)" value={r.info?.contractExpiry} onChange={v => setInfo('contractExpiry', v)} placeholder="-" />
+      </div>
+
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
         <button style={S.btn} onClick={() => onSave(r)}>บันทึก</button>
         <button style={S.btnGhost} onClick={onCancel}>ยกเลิก</button>

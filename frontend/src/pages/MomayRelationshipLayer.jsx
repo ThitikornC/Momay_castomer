@@ -2780,7 +2780,7 @@ function MomayRelationshipLayerInner() {
           </div>
           <div style={{ flex:1, overflow:'hidden', marginLeft:8 }}>
             <div style={{ animation:'momay-marquee 18s linear infinite', whiteSpace:'nowrap', display:'inline-block', paddingLeft:'100%', fontSize:14, color:'#ffffff', fontFamily:'monospace', letterSpacing:'0.05em', fontWeight:600 }}>
-              {`Collaborative Sensing Platform by Momay สำนักหอสมุด ม.บูรพา   ${new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric'})}${weather ? `   |   ${weather.temp.toFixed(1)}°C   |   ${weather.icon}   |` : '   |'}`}
+              {`Collaborative Sensing Platform by Momay ${(BUU_ROOMS[selectedFloor]?.info?.siteName) || ''}   ${new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric'})}${weather ? `   |   ${weather.temp.toFixed(1)}°C   |   ${weather.icon}   |` : '   |'}`}
             </div>
           </div>
 
