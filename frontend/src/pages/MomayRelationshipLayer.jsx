@@ -4,6 +4,7 @@ import { Chart, registerables } from 'chart.js'
 import QRCode from 'qrcode'
 import LayerGreedy from './LayerGreedy.jsx'
 import LayerDP from './LayerDP.jsx'
+import SolarReportBuilder from '../components/SolarReportBuilder.jsx'
 
 Chart.register(...registerables)
 
@@ -839,6 +840,7 @@ function MomaySolarPopup({ open, onClose, room }) {
   const [reportOpen, setReportOpen] = useState(false)
   const [reportData, setReportData] = useState(null)
   const [generating, setGenerating] = useState(false)
+  const [builderOpen, setBuilderOpen] = useState(false)
   const reportRef  = useRef(null)
   const chartRef   = useRef(null)
   const chartInstRef = useRef(null)
@@ -1044,6 +1046,15 @@ function MomaySolarPopup({ open, onClose, room }) {
             onClick={openReport}
             style={{ width:30, height:30, cursor:'pointer', paddingTop:4, filter:'brightness(0) invert(1)' }}
           />
+
+          {/* รายงานแบบกำหนดเอง — เลือกหลายวัน/หัวข้อ แล้ว Export PDF */}
+          <button
+            onClick={() => { if (base) setBuilderOpen(true) }}
+            disabled={!base}
+            style={{ ...pillStyle, cursor: base ? 'pointer' : 'not-allowed', opacity: base ? 1 : 0.35, color:AMBER }}
+          >
+            สร้างรายงานแบบกำหนดเอง
+          </button>
         </div>
       </div>
 
@@ -1132,6 +1143,15 @@ function MomaySolarPopup({ open, onClose, room }) {
           </tbody>
         </table>
       </div>
+
+      <SolarReportBuilder
+        open={builderOpen}
+        onClose={() => setBuilderOpen(false)}
+        apiBase={base}
+        device={device}
+        siteName={BUU_ROOMS.find(r => r.id === room)?.info?.siteName || room}
+        initialDate={date}
+      />
     </>
   )
 }
