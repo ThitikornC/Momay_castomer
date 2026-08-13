@@ -196,14 +196,15 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
   const [rawCache, setRawCache]     = useState({})   // date -> { mins, power, cov } จากข้อมูลดิบ
 
   // ตารางจุดคุ้มทุน — แยกโซล่าเซลล์กับแบตเตอรี่คนละตาราง เงินลงทุนคนละก้อน
-  // ปล่อยขนาดระบบว่างไว้ = ใช้ค่าที่ระบบแนะนำจากการใช้ไฟจริง
+  // ฝั่งโซล่า: เว้นขนาดว่างไว้ = ใช้ค่าที่ระบบแนะนำจากการใช้ไฟจริง
+  // ฝั่งแบต: กรอกความจุเองทั้งหมด (เลือกรุ่นแบตตามที่จะเสนอ ไม่ผูกกับตัวเลขที่ระบบแนะนำ)
   const [showPaySolar, setShowPaySolar] = useState(true)
   const [payKw, setPayKw]               = useState('')
   const [paySun, setPaySun]             = useState(4)
   const [payInvest, setPayInvest]       = useState(200000)
 
   const [showPayBatt, setShowPayBatt]     = useState(true)
-  const [payBattKwh, setPayBattKwh]       = useState('')
+  const [payBattKwh, setPayBattKwh]       = useState(10)
   const [payBattDod, setPayBattDod]       = useState(BATTERY_DOD * 100)
   const [payBattInvest, setPayBattInvest] = useState(150000)
 
@@ -374,21 +375,13 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
     return { kw, sun, invest, prodDay, auto: !(Number(payKw) > 0), ...saveOf(prodDay, invest) }
   }, [payKw, paySun, payInvest, rate, payKwAuto])
 
-  // ความจุแบตที่แนะนำ = ใบที่ติดป้าย "แนะนำ" อยู่ ถ้าไม่ได้ติดป้ายก็เอาใบแรกที่เปิดแสดง
-  const battKwhAuto = useMemo(() => {
-    if (!stats) return 0
-    const energy = { evening: stats.avg.battEvening, night: stats.avg.battNight, custom: stats.avg.battCustom }
-    const key = [battRec, 'evening', 'night', 'custom'].find(k => k && battShow[k])
-    return key ? energy[key] / BATTERY_DOD : 0
-  }, [stats, battRec, battShow])
-
   const paybackBatt = useMemo(() => {
-    const kwh    = Number(payBattKwh) > 0 ? Number(payBattKwh) : battKwhAuto
+    const kwh    = Number(payBattKwh) || 0
     const dod    = Number(payBattDod) || 0
     const invest = Number(payBattInvest) || 0
     const usable = kwh * (dod / 100)             // ใช้ได้จริงต่อรอบ = ความจุ × DoD
-    return { kwh, dod, invest, usable, auto: !(Number(payBattKwh) > 0), ...saveOf(usable, invest) }
-  }, [payBattKwh, payBattDod, payBattInvest, rate, battKwhAuto])
+    return { kwh, dod, invest, usable, ...saveOf(usable, invest) }
+  }, [payBattKwh, payBattDod, payBattInvest, rate])
 
   if (!open) return null
 
@@ -662,14 +655,15 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
             {showPayBatt && (
               <div style={{ margin: '6px 0 10px 23px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div>
-                  <div style={sub}>ความจุแบตเตอรี่ (kWh)</div>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <input type="number" step="0.01" min="0" value={payBattKwh}
-                           placeholder={battKwhAuto ? `แนะนำ ${n2(battKwhAuto)}` : 'แนะนำอัตโนมัติ'}
-                           onChange={e => setPayBattKwh(e.target.value)} style={{ ...field, flex: 1 }} />
-                    <button onClick={() => setPayBattKwh('')} disabled={paybackBatt.auto}
-                            style={{ ...btn, padding: '7px 8px', fontSize: 10, opacity: paybackBatt.auto ? 0.45 : 1 }}>ค่าแนะนำ</button>
-                  </div>
+                  <div style={sub}>ความจุแบตเตอรี่ที่จะติดตั้ง (kWh)</div>
+                  <input type="number" step="0.01" min="0" value={payBattKwh}
+                         onChange={e => setPayBattKwh(e.target.value)} style={field} />
+                  {stats && (
+                    <div style={{ fontSize: 10, color: '#777', marginTop: 4 }}>
+                      อ้างอิง: การ์ดแนะนำแบตด้านบนคำนวณได้ {n2(stats.avg.battEvening / BATTERY_DOD)} kWh (หัวค่ำ)
+                      / {n2(stats.avg.battNight / BATTERY_DOD)} kWh (ทั้งคืน)
+                    </div>
+                  )}
                 </div>
                 <div>
                   <div style={sub}>ใช้งานได้จริงต่อรอบ — DoD (%)</div>
@@ -685,8 +679,8 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
             )}
 
             <div style={{ fontSize: 10, color: '#777', lineHeight: 1.5 }}>
-              เว้นช่องขนาดไว้ = ใช้ค่าที่คำนวณจากการใช้ไฟจริง · ใช้อัตราค่าไฟ {n2(rate)} บาท/Unit
-              จากช่องด้านบน · คิดเดือนละ 30 วัน ปีละ 12 เดือน
+              ฝั่งโซล่าเซลล์เว้นช่องขนาดไว้ = ใช้ค่าที่คำนวณจากการใช้ไฟจริง · ฝั่งแบตเตอรี่กรอกความจุเอง ·
+              ใช้อัตราค่าไฟ {n2(rate)} บาท/Unit จากช่องด้านบน · คิดเดือนละ 30 วัน ปีละ 12 เดือน
             </div>
           </div>
 
