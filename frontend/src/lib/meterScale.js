@@ -19,9 +19,14 @@ export const POWER_UNITS = [
 ]
 
 // ค่าเริ่มต้นเมื่อมิเตอร์ยังไม่ได้ตั้ง meta.powerUnit
-// ตั้ง env `VITE_METER_POWER_UNIT=kW` แยกต่อ Railway service ได้ (repo เดียวกันแต่คนละ build)
-// default = 'W' เพราะมิเตอร์ที่ใช้อยู่ตอนนี้ (EM96 / IP Power Meter) ส่งเป็น W ทั้งคู่
-export const DEFAULT_POWER_UNIT = (import.meta.env.VITE_METER_POWER_UNIT || 'W').trim()
+// ตั้ง env `VITE_METER_POWER_UNIT=W` แยกต่อ Railway service ได้ (repo เดียวกันแต่คนละ build)
+//
+// default = 'kW' คือ "ไม่แปลง" โดยตั้งใจ — การหารเป็นการแก้ค่าที่ backend ส่งมา
+// ต้องสั่งให้ทำเท่านั้น ห้ามทำเอง ถ้า default เป็น 'W' ไซต์ที่ใช้มิเตอร์ส่ง kW อยู่แล้ว
+// (PM3250 — momay_ESP_pm3250/) จะโดนหารซ้ำเงียบๆ ทศนิยมเลื่อน 3 ตำแหน่งทั้งไซต์
+// ⇒ ไซต์ที่ใช้ EM96 / IP Power Meter (ส่ง W) ต้องตั้ง VITE_METER_POWER_UNIT=W
+//    หรือตั้ง meta.powerUnit='W' รายมิเตอร์ที่ /settings
+export const DEFAULT_POWER_UNIT = (import.meta.env.VITE_METER_POWER_UNIT || 'kW').trim()
 
 // ตัวหารสำหรับค่าที่ backend ส่งกลับมา: 'W' → 1000, 'kW' → 1 (ไม่แปลง)
 export function powerDivisor(unit) {
