@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { DEFAULT_POWER_UNIT, scaleSolar, scaleEnergyRows } from '../lib/meterScale.js'
 
 // ── ตัวสร้างรายงานโซล่าเซลล์ — เลือกวัน/หัวข้อเอง แล้ว Export PDF หรือแชร์ให้ลูกค้า ──
 
@@ -96,7 +97,7 @@ function todayStr() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
 
-export default function SolarReportBuilder({ open, onClose, apiBase, device, siteName, initialDate }) {
+export default function SolarReportBuilder({ open, onClose, apiBase, device, siteName, initialDate, powerUnit = DEFAULT_POWER_UNIT }) {
   const [dates, setDates]       = useState([])
   const [cache, setCache]       = useState({})      // date -> solar json | 'error'
   const [pending, setPending]   = useState([])      // วันที่กำลังโหลด
@@ -134,7 +135,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
       const r = await fetch(`${apiBase}/solar-size?date=${ds}&ratePerKwh=${rate}`)
       const j = await r.json()
       // วันที่ไม่มีข้อมูลยังตอบ hourly เป็น 0 ทั้งวันมาด้วย → ต้องเช็ค error ไม่งั้นได้แถวศูนย์
-      setCache(c => ({ ...c, [ds]: (j && !j.error && j.hourly) ? j : 'error' }))
+      setCache(c => ({ ...c, [ds]: (j && !j.error && j.hourly) ? scaleSolar(j, powerUnit) : 'error' }))
     } catch {
       setCache(c => ({ ...c, [ds]: 'error' }))
     } finally {
@@ -157,7 +158,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
         const r = await fetch(`${apiBase}/solar-size?date=${ds}&ratePerKwh=${newRate}`)
         const j = await r.json()
         // วันที่ไม่มีข้อมูลยังตอบ hourly เป็น 0 ทั้งวันมาด้วย → ต้องเช็ค error ไม่งั้นได้แถวศูนย์
-      setCache(c => ({ ...c, [ds]: (j && !j.error && j.hourly) ? j : 'error' }))
+      setCache(c => ({ ...c, [ds]: (j && !j.error && j.hourly) ? scaleSolar(j, powerUnit) : 'error' }))
       } catch {
         setCache(c => ({ ...c, [ds]: 'error' }))
       } finally {
@@ -180,12 +181,12 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
           const r = await fetch(`${apiBase}/daily-energy/${device}?date=${ds}`)
           const j = await r.json()
           if (!alive) return
-          setRawCache(c => ({ ...c, [ds]: minuteEnergyFromRaw(j?.data || []) }))
+          setRawCache(c => ({ ...c, [ds]: minuteEnergyFromRaw(scaleEnergyRows(j?.data || [], powerUnit)) }))
         } catch { /* วันไหนดึงไม่ได้ก็ข้ามไป */ }
       }
     })()
     return () => { alive = false }
-  }, [open, battShow.evening, battShow.night, battShow.custom, dates, cache, apiBase, device])
+  }, [open, battShow.evening, battShow.night, battShow.custom, dates, cache, apiBase, device, powerUnit])
 
   function onPickImages(e) {
     const files = Array.from(e.target.files || [])

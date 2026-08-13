@@ -5,6 +5,10 @@ import QRCode from 'qrcode'
 import LayerGreedy from './LayerGreedy.jsx'
 import LayerDP from './LayerDP.jsx'
 import SolarReportBuilder from '../components/SolarReportBuilder.jsx'
+import {
+  DEFAULT_POWER_UNIT, scaleEnergyRows, scaleDailyBill, scaleSolar,
+  scaleCalendarEvents, scaleNotifications,
+} from '../lib/meterScale.js'
 
 Chart.register(...registerables)
 
@@ -385,7 +389,7 @@ function planHeatmapSrc(room) {
 let BUU_ROOMS = [
   { id: 'ทั้งอาคาร', label: 'ทั้งอาคาร', shortLabel: 'รวม',
     img: '/Floorplan/Floor4plan.png', heatmap: '/Floorplan/HeatmapgridFloor4.svg',
-    apiBase: BUILDING_API, device: 'pm_building', info: {} },
+    apiBase: BUILDING_API, device: 'pm_building', powerUnit: DEFAULT_POWER_UNIT, info: {} },
 ]
 let FLOORS = BUU_ROOMS
 
@@ -406,13 +410,19 @@ function mapConfigRooms(apiRooms) {
       img: r.img,
       heatmap: r.heatmap,
       kind: r.kind,
-      apiBase: (meter?.meta?.apiBase || BUILDING_API).replace(/\/+$/, ''),  // ตัด / ท้าย กัน double slash
+      // ไม่มี meter device → apiBase ว่าง = "ยังไม่ได้ตั้งมิเตอร์" (ไม่ fallback ไปมิเตอร์รวม 456)
+      apiBase: meter?.meta?.apiBase ? meter.meta.apiBase.replace(/\/+$/, '') : '',
       device: (meter?.meta?.source || 'pm_building').trim(),
+      // หน่วยกำลังไฟที่มิเตอร์ส่งขึ้น backend ('W' = ต้องหาร 1000 ตอนแสดงผล) — ดู lib/meterScale.js
+      powerUnit: (meter?.meta?.powerUnit || DEFAULT_POWER_UNIT).trim(),
       info: r.info || {},
       devices: r.devices || [],
     }
   })
 }
+
+// หน่วยกำลังไฟของห้อง (ใช้ใน popup ที่รู้แค่ roomId) — ไม่เจอห้อง = ใช้ค่า default
+const roomPowerUnit = id => BUU_ROOMS.find(r => r.id === id)?.powerUnit ?? DEFAULT_POWER_UNIT
 
 const FLOOR_TRACK_PRESET = {
   'ทั้งอาคาร':        { people: 188 },   // รวม 3 ห้อง (55+63+70)
@@ -533,14 +543,47 @@ function _addDaysStr(d, n) {
   return _localDateStr(dt)
 }
 
+// ── Data cutoff: ซ่อนข้อมูลก่อนวันติดตั้ง — ตั้งแยกต่อ deployment ───────────────
+// ตั้ง env `VITE_DATA_MIN_DATE=2026-07-22` เฉพาะ Railway service ที่ต้องการซ่อน
+// repo เดียวกันแต่คนละ service = คนละ build → service อื่นไม่ตั้ง env นี้ = ไม่ซ่อนอะไรเลย
+// รูปแบบ YYYY-MM-DD → เทียบเป็น string ตรงๆ ได้ เพราะ ISO เรียงตัวอักษร = เรียงตามเวลา
+const DATA_MIN_DATE = (import.meta.env.VITE_DATA_MIN_DATE || '').trim()
+
+function isBeforeMinDate(ds) { return !!DATA_MIN_DATE && !!ds && ds < DATA_MIN_DATE }
+
+// ดึง Date ที่เก่ากว่า cutoff กลับมาอยู่ที่ cutoff (ใช้กับปุ่มเลื่อนวัน/สัปดาห์)
+function clampDateObj(d) {
+  if (!DATA_MIN_DATE) return d
+  return _localDateStr(d) < DATA_MIN_DATE ? new Date(DATA_MIN_DATE + 'T00:00:00') : d
+}
+
+// เวอร์ชัน string 'YYYY-MM-DD' ของ clampDateObj
+function clampDateStr(ds) { return isBeforeMinDate(ds) ? DATA_MIN_DATE : ds }
+
+// กรอง array ที่มี field วันเวลา (notification ฯลฯ) ให้เหลือแต่ตั้งแต่ cutoff ขึ้นไป
+function afterMinDate(rows, key = 'timestamp') {
+  if (!Array.isArray(rows)) return []
+  if (!DATA_MIN_DATE) return rows
+  return rows.filter(r => !isBeforeMinDate(String(r?.[key] ?? '').slice(0, 10)))
+}
+
 // In-memory cache keyed by local date (same as script.js dailyDataCache)
 const _dailyCache = {}
 
+// ดึงข้อมูลกราฟ + แปลงหน่วยกำลังไฟตามมิเตอร์ (W → kW)
+// แปลงตอน return ไม่ใช่ตอน fetch → ค่าใน cache ยังเป็นค่าดิบจาก backend
+// (เปลี่ยน powerUnit ที่ /settings แล้วไม่ต้องล้าง cache และไม่มีทางหารซ้ำสองรอบ)
+async function _fetchEnergyForDate(date, apiBase = MOMAY_API, device = 'pm_deer', powerUnit = DEFAULT_POWER_UNIT) {
+  return scaleEnergyRows(await _fetchEnergyRaw(date, apiBase, device), powerUnit)
+}
+
 // Exact port of script.js fetchDailyData — UTC window fetch + localStorage TTL cache
-async function _fetchEnergyForDate(date, apiBase = MOMAY_API, device = 'pm_deer') {
+async function _fetchEnergyRaw(date, apiBase = MOMAY_API, device = 'pm_deer') {
+  if (!apiBase) return []                               // ห้องไม่มีมิเตอร์ → ไม่ดึงข้อมูล
   // accept both Date object and YYYY-MM-DD string
   const dateObj = (date instanceof Date) ? date : new Date(date + 'T00:00:00')
   const localKey = _localDateStr(dateObj)
+  if (isBeforeMinDate(localKey)) return []              // ก่อนวัน cutoff → ไม่ยิง API ไม่แสดงกราฟ
   const cacheKey = `${device}@${localKey}`              // แยก cache ตาม device (กันข้อมูลข้ามห้อง)
   const storageKey = `momayDailyData-${device}-${localKey}`
   const STORAGE_TTL = 1000 * 60 * 15 // 15 min
@@ -580,6 +623,7 @@ async function _fetchEnergyForDate(date, apiBase = MOMAY_API, device = 'pm_deer'
 
 // Fetch the UTC date window covering this local date (exact script.js logic)
 async function _fetchFromNetwork(dateObj, apiBase = MOMAY_API, device = 'pm_deer') {
+  if (!apiBase) return []                               // ห้องไม่มีมิเตอร์ → ไม่ดึงข้อมูล
   const localMidnight = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate())
   const utcStart = new Date(localMidnight.getTime() - (localMidnight.getTimezoneOffset() * 60000))
   const utcEnd   = new Date(utcStart.getTime() + 24 * 3600 * 1000 - 1)
@@ -675,6 +719,7 @@ function MomayCalendarPopup({ open, onClose, room }) {
   const cache = useRef({})
 
   const base = BUU_ROOMS.find(r => r.id === room)?.apiBase ?? MOMAY_API
+  const unit = roomPowerUnit(room)
 
   function normalizeCalData(data) {
     if (!Array.isArray(data)) return []
@@ -682,6 +727,7 @@ function MomayCalendarPopup({ open, onClose, room }) {
     data.forEach(e => {
       const d = e.start
       if (!d) return
+      if (isBeforeMinDate(String(d).slice(0, 10))) return   // ซ่อนวันก่อน cutoff ออกจากปฏิทิน
       if (!grouped[d]) grouped[d] = { start: d, bill: null, energy: null }
       const type = e.extendedProps?.type
       const title = e.title || ''
@@ -695,11 +741,12 @@ function MomayCalendarPopup({ open, onClose, room }) {
   }
 
   async function fetchMonth(y, m) {
+    if (!base) return []                                 // ห้องไม่มีมิเตอร์ → ไม่ดึงข้อมูล
     const key = `${y}-${m}`
     if (cache.current[key]) return cache.current[key]
     const mp = String(m).padStart(2, '0')
     const data = await fetch(`${base}/calendar?year=${y}&month=${mp}`).then(r => r.json()).catch(() => [])
-    const result = normalizeCalData(data)
+    const result = normalizeCalData(scaleCalendarEvents(data, unit))   // W → kW ก่อนอ่านตัวเลขจาก title
     cache.current[key] = result
     return result
   }
@@ -746,10 +793,11 @@ function MomayCalendarPopup({ open, onClose, room }) {
   const clickDay = async d => {
     if (!d) return
     const ds = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+    if (isBeforeMinDate(ds)) return                       // วันก่อน cutoff → กดไม่ได้
     setSelected(ds); setDayDetail(null); setDetailLoading(true)
     try {
       const r = await fetch(`${base}/daily-bill?date=${ds}`)
-      const j = await r.json()
+      const j = scaleDailyBill(await r.json(), unit)
       const bill = j.electricity_bill ?? 0
       setDayDetail({ bill: bill.toFixed(2), unit: (bill / 4.4).toFixed(2), date: ds })
     } catch {
@@ -787,6 +835,7 @@ function MomayCalendarPopup({ open, onClose, room }) {
             const isToday    = d===today.getDate()&&month===today.getMonth()+1&&year===today.getFullYear()
             const ds         = d ? `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}` : ''
             const isSelected = selected === ds
+            const locked     = !!d && isBeforeMinDate(ds)   // ก่อนวันติดตั้ง → จางลง กดไม่ได้
             const hasBill    = ev && ev.bill !== null
             const hasEnergy  = ev && ev.energy !== null
             return (
@@ -794,10 +843,10 @@ function MomayCalendarPopup({ open, onClose, room }) {
                 minHeight: 60,
                 background: isSelected ? 'rgba(255,184,0,0.2)' : isToday ? AMBER_GLOW : DARK_CARD,
                 border: isSelected ? `2px solid ${AMBER}` : isToday ? '2px solid rgba(255,184,0,0.5)' : '1px solid rgba(255,184,0,0.12)',
-                cursor: d ? 'pointer' : 'default',
+                cursor: d && !locked ? 'pointer' : 'default',
                 display: 'flex', flexDirection: 'column', padding: '4px 3px',
                 boxSizing: 'border-box',
-                opacity: loading && !ev ? 0.5 : 1,
+                opacity: locked ? 0.25 : (loading && !ev ? 0.5 : 1),
               }}>
                 {d && (
                   <>
@@ -848,6 +897,7 @@ function MomaySolarPopup({ open, onClose, room }) {
 
   const base = BUU_ROOMS.find(r => r.id === room)?.apiBase ?? MOMAY_API
   const device = BUU_ROOMS.find(r => r.id === room)?.device ?? 'pm_deer'
+  const unit = roomPowerUnit(room)
 
   function addDay(d, n) {
     const dt = new Date(d + 'T00:00:00'); dt.setDate(dt.getDate() + n)
@@ -855,16 +905,20 @@ function MomaySolarPopup({ open, onClose, room }) {
   }
 
   function prefetchSolar(d) {
+    if (!base) return                                    // ห้องไม่มีมิเตอร์ → ไม่ดึงข้อมูล
+    if (isBeforeMinDate(d)) return                        // ก่อนวัน cutoff → ไม่ prefetch
     const key = `${room}-${d}`
     if (solarCache.current[key]) return
     fetch(`${base}/solar-size?date=${d}`)
       .then(r => r.json())
-      .then(json => { solarCache.current[key] = json })
+      .then(json => { solarCache.current[key] = scaleSolar(json, unit) })
       .catch(() => {})
   }
 
   useEffect(() => {
     if (!open) return
+    if (!base) { setData(null); setLoading(false); return }   // ห้องไม่มีมิเตอร์
+    if (isBeforeMinDate(date)) { setData(null); setLoading(false); return }  // ก่อนวัน cutoff → ไม่แสดง
     const key = `${room}-${date}`
     if (solarCache.current[key]) {
       setData(solarCache.current[key])
@@ -874,7 +928,7 @@ function MomaySolarPopup({ open, onClose, room }) {
     }
     fetch(`${base}/solar-size?date=${date}`)
       .then(r => r.json())
-      .then(json => { solarCache.current[key] = json; setData(json) })
+      .then(json => { const s = scaleSolar(json, unit); solarCache.current[key] = s; setData(s) })
       .catch(() => setData(null))
       .finally(() => {
         setLoading(false)
@@ -897,6 +951,8 @@ function MomaySolarPopup({ open, onClose, room }) {
   const savingsDay  = fmtL(data?.savingsDay)
   const savingsMonth = fmtL(data?.savingsMonth)
 
+  const solarAtMin = !!DATA_MIN_DATE && date <= DATA_MIN_DATE   // ถึงขอบ cutoff → ปิดปุ่มย้อนวัน
+
   const dateStr = (() => {
     const d = new Date(date+'T00:00:00')
     const pad = n => String(n).padStart(2,'0')
@@ -912,7 +968,10 @@ function MomaySolarPopup({ open, onClose, room }) {
         fetch(`${base}/solar-size?date=${date}`).then(r => r.json()),
         fetch(`${base}/daily-energy/${device}?date=${date}`).then(r => r.json()),
       ])
-      setReportData({ solar, energyData: energyJson?.data || [] })
+      setReportData({
+        solar: scaleSolar(solar, unit),
+        energyData: scaleEnergyRows(energyJson?.data || [], unit),
+      })
     } catch (err) { console.error('prepareReportData failed:', err) }
   }
 
@@ -1012,7 +1071,8 @@ function MomaySolarPopup({ open, onClose, room }) {
 
           {/* Date nav */}
           <div style={{ display:'flex', alignItems:'center', gap:6, width:'100%', justifyContent:'center' }}>
-            <button onClick={() => setDate(addDay(date,-1))} style={navBtn}>&lt;</button>
+            <button onClick={() => setDate(clampDateStr(addDay(date,-1)))} disabled={solarAtMin}
+                    style={{ ...navBtn, cursor: solarAtMin ? 'not-allowed' : 'pointer', opacity: solarAtMin ? 0.35 : 1 }}>&lt;</button>
             <span style={{ background:DARK_CARD, border:AMBER_BORDER, borderRadius:8, padding:'4px 8px', fontWeight:700, fontSize:13, color:AMBER_DIM, textAlign:'center', flex:1 }}>{dateStr}</span>
             <button onClick={() => setDate(addDay(date,1))} style={navBtn}>&gt;</button>
           </div>
@@ -1149,6 +1209,7 @@ function MomaySolarPopup({ open, onClose, room }) {
         onClose={() => setBuilderOpen(false)}
         apiBase={base}
         device={device}
+        powerUnit={unit}
         siteName={BUU_ROOMS.find(r => r.id === room)?.info?.siteName || room}
         initialDate={date}
       />
@@ -1163,13 +1224,20 @@ function MomayNotifPopup({ open, onClose, room }) {
   const [loading, setLoading] = useState(false)
 
   const base = BUU_ROOMS.find(r => r.id === room)?.apiBase ?? MOMAY_API
+  const unit = roomPowerUnit(room)
 
   const load = () => {
+    if (!base) { setItems([]); setUnread(0); setLoading(false); return }   // ห้องไม่มีมิเตอร์
     setLoading(true)
     fetch(`${base}/api/notifications/all?limit=50`)
       .then(r => r.json())
       .then(data => {
-        if (data.success) { setItems(data.data || []); setUnread(data.unreadCount || 0) }
+        if (data.success) {
+          // แปลงหน่วยทั้งตัวเลข (power/energy_kwh/bill) และข้อความ title/body ที่ backend ประกอบไว้แล้ว
+          const rows = afterMinDate(scaleNotifications(data.data, unit))   // ตัด notification ก่อน cutoff ออก
+          setItems(rows)
+          setUnread(DATA_MIN_DATE ? rows.filter(n => !n.read).length : (data.unreadCount || 0))
+        }
         else setItems([])
       })
       .catch(() => setItems([]))
@@ -1436,7 +1504,7 @@ function MomayBookingPopup({ open, onClose, room }) {
   )
 }
 
-function MomayPowerChart({ onBookingClick, roomLabel = 'BUU Library', apiBase = MOMAY_API, device = 'pm_deer' }) {
+function MomayPowerChart({ onBookingClick, roomLabel = 'BUU Library', apiBase = MOMAY_API, device = 'pm_deer', powerUnit = DEFAULT_POWER_UNIT }) {
   const chartRef   = useRef(null)
   const chartInst  = useRef(null)
   const [curDate, setCurDate]       = useState(() => new Date())
@@ -1448,7 +1516,7 @@ function MomayPowerChart({ onBookingClick, roomLabel = 'BUU Library', apiBase = 
     async function load() {
       setLoading(true)
       try {
-        const rows = await _fetchEnergyForDate(curDate, apiBase, device)
+        const rows = await _fetchEnergyForDate(curDate, apiBase, device, powerUnit)
         if (cancelled || !chartRef.current) return
 
         // 1440-pt arrays — exact script.js logic
@@ -1552,7 +1620,7 @@ function MomayPowerChart({ onBookingClick, roomLabel = 'BUU Library', apiBase = 
     }
     load()
     return () => { cancelled = true }
-  }, [curDate, apiBase, device])
+  }, [curDate, apiBase, device, powerUnit])
 
   // Toggle without re-fetch
   useEffect(() => {
@@ -1572,7 +1640,9 @@ function MomayPowerChart({ onBookingClick, roomLabel = 'BUU Library', apiBase = 
 
   const months = ['January','February','March','April','May','June','July','August','September','October','November','December']
   function fmtDisplay(d) { return `${String(d.getDate()).padStart(2,'0')} - ${months[d.getMonth()]} - ${d.getFullYear()}` }
-  function shift(n) { setCurDate(d => { const nd = new Date(d); nd.setDate(nd.getDate() + n); return nd }) }
+  // เลื่อนวัน — ไม่ให้ย้อนไปก่อน cutoff (ปุ่ม < ถูกปิดเมื่อถึงขอบด้วย)
+  function shift(n) { setCurDate(d => { const nd = new Date(d); nd.setDate(nd.getDate() + n); return clampDateObj(nd) }) }
+  const atMinDate = !!DATA_MIN_DATE && _localDateStr(curDate) <= DATA_MIN_DATE
 
   return (
     <div style={{ background: '#111111', borderRadius: 14, padding: '14px 16px' }}>
@@ -1598,7 +1668,7 @@ function MomayPowerChart({ onBookingClick, roomLabel = 'BUU Library', apiBase = 
 
       {/* Date navigation row */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 10 }}>
-        <button onClick={() => shift(-1)} style={{ background: 'rgba(255,184,0,0.1)', border: '1px solid rgba(255,184,0,0.3)', borderRadius: 6, color: '#FFB800', cursor: 'pointer', width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700 }}>&lt;</button>
+        <button onClick={() => shift(-1)} disabled={atMinDate} style={{ background: 'rgba(255,184,0,0.1)', border: '1px solid rgba(255,184,0,0.3)', borderRadius: 6, color: '#FFB800', cursor: atMinDate ? 'not-allowed' : 'pointer', opacity: atMinDate ? 0.35 : 1, width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700 }}>&lt;</button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'rgba(255,184,0,0.08)', border: '1px solid rgba(255,184,0,0.25)', borderRadius: 8, padding: '5px 14px' }}>
           <Calendar size={13} color="#c9a96e" />
           <span style={{ color: '#c9a96e', fontSize: 11, fontWeight: 600, minWidth: 130, textAlign: 'center' }}>{fmtDisplay(curDate)}</span>
@@ -2326,7 +2396,7 @@ function MomayStatusRow({ room, devices = [] }) {
 }
 
 // ── Bill Panel — ported from script.js energyChart + bill circles ─────────
-function MomayBillPanel({ todayBill, yesterdayBill, apiBase = MOMAY_API }) {
+function MomayBillPanel({ todayBill, yesterdayBill, apiBase = MOMAY_API, powerUnit = DEFAULT_POWER_UNIT }) {
   const chartRef    = useRef(null)
   const chartInst   = useRef(null)
   const [endDate, setEndDate] = useState(() => new Date())
@@ -2348,6 +2418,7 @@ function MomayBillPanel({ todayBill, yesterdayBill, apiBase = MOMAY_API }) {
   useEffect(() => {
     let cancelled = false
     async function load() {
+      if (!apiBase) { setLoading(false); return }         // ห้องไม่มีมิเตอร์
       setLoading(true)
       try {
         // 7-day window ending at endDate (exact script.js logic)
@@ -2359,7 +2430,12 @@ function MomayBillPanel({ todayBill, yesterdayBill, apiBase = MOMAY_API }) {
         const fmtLabel = d => d.toLocaleDateString('th-TH', { day: '2-digit', month: 'short' })
         // ใช้ข้อมูลรายชั่วโมงจริงจาก /solar-size แยกกลางวัน/กลางคืน (ไม่เดา 60/40 อีกต่อไป)
         const results = await Promise.all(
-          days.map(d => fetch(`${apiBase}/solar-size?date=${_localDateStr(d)}`).then(r => r.json()).catch(() => null))
+          days.map(d => {
+            const ds = _localDateStr(d)
+            if (isBeforeMinDate(ds)) return Promise.resolve(null)   // ก่อน cutoff → ไม่ยิง API (แท่งว่าง)
+            return fetch(`${apiBase}/solar-size?date=${ds}`)
+              .then(r => r.json()).then(j => scaleSolar(j, powerUnit)).catch(() => null)
+          })
         )
         if (cancelled || !chartRef.current) return
 
@@ -2413,7 +2489,7 @@ function MomayBillPanel({ todayBill, yesterdayBill, apiBase = MOMAY_API }) {
     }
     load()
     return () => { cancelled = true }
-  }, [endDate, apiBase])
+  }, [endDate, apiBase, powerUnit])
 
   useEffect(() => () => { if (chartInst.current) chartInst.current.destroy() }, [])
 
@@ -2436,6 +2512,7 @@ function MomayBillPanel({ todayBill, yesterdayBill, apiBase = MOMAY_API }) {
 
   const today     = _localDateStr(new Date())
   const yesterday = _addDaysStr(today, -1)
+  const billAtMin = !!DATA_MIN_DATE && _localDateStr(endDate) <= DATA_MIN_DATE
 
   return (
     <div style={{ background: '#111111', border: '1.5px solid rgba(255,184,0,0.2)', borderRadius: 14, padding: '14px 18px' }}>
@@ -2449,7 +2526,7 @@ function MomayBillPanel({ todayBill, yesterdayBill, apiBase = MOMAY_API }) {
       </div>
       {/* Bar chart */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-        <button onClick={() => setEndDate(d => { const nd = new Date(d); nd.setDate(nd.getDate() - 7); return nd })} style={{ background: 'none', border: '1px solid rgba(255,184,0,0.3)', borderRadius: 4, color: '#FFB800', cursor: 'pointer', padding: '2px 8px', fontSize: 12 }}>&lt;</button>
+        <button onClick={() => setEndDate(d => { const nd = new Date(d); nd.setDate(nd.getDate() - 7); return clampDateObj(nd) })} disabled={billAtMin} style={{ background: 'none', border: '1px solid rgba(255,184,0,0.3)', borderRadius: 4, color: '#FFB800', cursor: billAtMin ? 'not-allowed' : 'pointer', opacity: billAtMin ? 0.35 : 1, padding: '2px 8px', fontSize: 12 }}>&lt;</button>
         <span style={{ color: '#888', fontSize: 10 }}>{chartTitle}</span>
         <button onClick={() => setEndDate(d => { const nd = new Date(d); nd.setDate(nd.getDate() + 7); return nd })} style={{ background: 'none', border: '1px solid rgba(255,184,0,0.3)', borderRadius: 4, color: '#FFB800', cursor: 'pointer', padding: '2px 8px', fontSize: 12 }}>&gt;</button>
       </div>
@@ -2585,10 +2662,15 @@ function MomayRelationshipLayerInner() {
 
   useEffect(() => {
     const roomBase = BUU_ROOMS[selectedFloor]?.apiBase ?? MOMAY_API
+    if (!roomBase) { setNotifCount(0); return }            // ห้องไม่มีมิเตอร์
     const load = () => {
       fetch(`${roomBase}/api/notifications/all?limit=50`)
         .then(r => r.json())
-        .then(j => setNotifCount(j.success ? (j.unreadCount || 0) : 0))
+        .then(j => {
+          if (!j.success) { setNotifCount(0); return }
+          const rows = afterMinDate(j.data)                 // นับเฉพาะตั้งแต่ cutoff ขึ้นไป
+          setNotifCount(DATA_MIN_DATE ? rows.filter(n => !n.read).length : (j.unreadCount || 0))
+        })
         .catch(() => {})
     }
     load()
@@ -2628,18 +2710,22 @@ function MomayRelationshipLayerInner() {
 
   useEffect(() => {
     const roomApi = BUU_ROOMS[selectedFloor]?.apiBase ?? MOMAY_API
+    const roomUnit = BUU_ROOMS[selectedFloor]?.powerUnit ?? DEFAULT_POWER_UNIT
     const today     = _bkkToday()
     const yesterday = _addDaysStr(today, -1)
     setEnergyToday(null); setEnergyYesterday(null)
+    if (!roomApi) return                                  // ห้องไม่มีมิเตอร์ → ไม่ดึงบิล
+    const getBill = ds => fetch(`${roomApi}/daily-bill?date=${ds}`)
+      .then(r => r.json()).then(j => scaleDailyBill(j, roomUnit))
     Promise.all([
-      fetch(`${roomApi}/daily-bill?date=${today}`).then(r => r.json()).catch(() => null),
-      fetch(`${roomApi}/daily-bill?date=${yesterday}`).then(r => r.json()).catch(() => null),
+      getBill(today).catch(() => null),
+      getBill(yesterday).catch(() => null),
     ]).then(([t, y]) => { setEnergyToday(t); setEnergyYesterday(y) })
     const id = setInterval(() => {
-      fetch(`${roomApi}/daily-bill?date=${_bkkToday()}`).then(r => r.json()).then(setEnergyToday).catch(() => {})
+      getBill(_bkkToday()).then(setEnergyToday).catch(() => {})
     }, 60000)
     return () => clearInterval(id)
-  }, [selectedFloor, BUU_ROOMS[selectedFloor]?.apiBase])
+  }, [selectedFloor, BUU_ROOMS[selectedFloor]?.apiBase, BUU_ROOMS[selectedFloor]?.powerUnit])
 
   const todayBill  = energyToday?.electricity_bill ?? null
   const todayUnit  = energyToday?.total_energy_kwh ?? null
@@ -3207,6 +3293,7 @@ function MomayRelationshipLayerInner() {
           roomLabel={BUU_ROOMS[selectedFloor]?.label ?? 'BUU Library'}
           apiBase={BUU_ROOMS[selectedFloor]?.apiBase ?? MOMAY_API}
           device={BUU_ROOMS[selectedFloor]?.device ?? 'pm_deer'}
+          powerUnit={BUU_ROOMS[selectedFloor]?.powerUnit ?? DEFAULT_POWER_UNIT}
         />
       </div>
 
@@ -3243,7 +3330,9 @@ function MomayRelationshipLayerInner() {
 
       {/* ══ Bill Compare ══ */}
       <div className="w-full rounded-2xl overflow-hidden" style={{ border: '1.5px solid rgba(255,184,0,0.25)' }}>
-        <MomayBillPanel todayBill={energyToday} yesterdayBill={energyYesterday} apiBase={BUU_ROOMS[selectedFloor]?.apiBase ?? MOMAY_API} />
+        <MomayBillPanel todayBill={energyToday} yesterdayBill={energyYesterday}
+          apiBase={BUU_ROOMS[selectedFloor]?.apiBase ?? MOMAY_API}
+          powerUnit={BUU_ROOMS[selectedFloor]?.powerUnit ?? DEFAULT_POWER_UNIT} />
       </div>
 
       {/* ══ Bottom row — Layer 1 + Layer 2 ══ (ซ่อนไว้ — เปิดกลับโดยลบ comment) */}

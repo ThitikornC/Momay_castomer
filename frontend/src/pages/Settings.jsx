@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useToast } from '../components/Toast.jsx'
+import { POWER_UNITS, DEFAULT_POWER_UNIT } from '../lib/meterScale.js'
 
 const API = (import.meta.env.VITE_DEVICES_API || 'http://localhost:8002').replace(/\/$/, '')
 const CACHE_KEY = 'momay_config_cache'
@@ -264,6 +265,18 @@ function DeviceForm({ initial, roomId, onSave, onCancel }) {
         {cat === 'meter' && <>
           <Field label="apiBase (URL backend มิเตอร์)" value={d.meta?.apiBase} onChange={v => setMeta('apiBase', v)} placeholder="https://xxx.up.railway.app" />
           <Field label="source (device)" value={d.meta?.source} onChange={v => setMeta('source', v)} placeholder="pm_deer / pm_sand / pm_building" />
+          {/* หน่วย active power ที่มิเตอร์ส่งขึ้น backend — backend คิด kWh จากค่านี้ตรงๆ (ถือว่าเป็น kW)
+              มิเตอร์ที่ส่งเป็น W (เช่น EM96) จึงต้องให้ dashboard หาร 1000 ก่อนแสดง (ดู lib/meterScale.js) */}
+          <label style={{ display: 'block' }}>
+            <span style={S.label}>หน่วยกำลังไฟที่มิเตอร์ส่งมา (powerUnit)</span>
+            <select style={S.input} value={d.meta?.powerUnit || DEFAULT_POWER_UNIT} onChange={e => setMeta('powerUnit', e.target.value)}>
+              {POWER_UNITS.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
+            </select>
+            <div style={{ fontSize: 10, color: '#888', marginTop: 4, lineHeight: 1.5 }}>
+              มีผลกับกราฟ Power, หน่วยไฟ (kWh), ค่าไฟ, รายงานโซล่าเซลล์ และแจ้งเตือน ·
+              เลือกผิด ตัวเลขจะเพี้ยน 1000 เท่า · ค่าเริ่มต้น = {DEFAULT_POWER_UNIT}
+            </div>
+          </label>
         </>}
         {cat === 'switch' && <>
           <Field label="mqttTopic (Tasmota)" value={d.mqttTopic} onChange={v => set('mqttTopic', v)} placeholder="tasmota_xxx" />
