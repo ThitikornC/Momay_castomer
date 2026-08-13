@@ -589,17 +589,9 @@ app.get('/calendar', async (req, res) => {
   try {
     const now = new Date();
 
-    // ระบุ ?year=&month= มา = ดึงเดือนนั้น (frontend ส่งมาตั้งแต่แรกแต่ก่อนหน้านี้ไม่ได้ใช้
-    // → เลื่อนดูเดือนย้อนหลังแล้วไม่มีข้อมูล) ไม่ระบุ = เดือนนี้ ตามพฤติกรรมเดิม
-    const qy = parseInt(req.query.year, 10);
-    const qm = parseInt(req.query.month, 10);
-    const useQuery = Number.isInteger(qy) && Number.isInteger(qm) && qm >= 1 && qm <= 12;
-    const refYear  = useQuery ? qy : now.getFullYear();
-    const refMonth = useQuery ? qm - 1 : now.getMonth();
-
-    // เดือนที่ขอ และเดือนก่อนหน้า
-    const startPrev = new Date(Date.UTC(refYear, refMonth - 1, 1));
-    const endCurrent = new Date(Date.UTC(refYear, refMonth + 1, 1));
+    // เดือนปัจจุบันและเดือนก่อนหน้า
+    const startPrev = new Date(Date.UTC(now.getFullYear(), now.getMonth() - 1, 1));
+    const endCurrent = new Date(Date.UTC(now.getFullYear(), now.getMonth() + 1, 1));
 
     // Aggregation pipeline: group by local Thailand date and compute daily energy (kWh)
     const agg = await PM_deer.aggregate([
