@@ -91,6 +91,86 @@ function sumMinutes(mins, startMin, endMin, posOnly = false) {
   return sum
 }
 
+// กำลังไฟเฉลี่ยรายนาที ไว้วาดกราฟตรวจข้อมูล — null = นาทีที่ไม่มีจุดอ่านเลย (กราฟจะขาดตรงนั้น)
+// เก็บแค่ 1440 ค่า/วัน แทนแถวดิบทั้งหมด (~8,000 แถว) จะได้ cache หลายวันพร้อมกันได้
+function minutePowerFromRaw(readings) {
+  const sum = new Float64Array(1440), cnt = new Int32Array(1440)
+  readings.forEach(d => {
+    const t = parseTs(d.timestamp)
+    if (Number.isNaN(+t)) return
+    const i = t.getUTCHours() * 60 + t.getUTCMinutes()
+    sum[i] += d.active_power_total ?? 0
+    cnt[i] += 1
+  })
+  return Array.from({ length: 1440 }, (_, i) => (cnt[i] ? sum[i] / cnt[i] : null))
+}
+
+// ── ตรวจความครบของข้อมูลรายวัน ────────────────────────────────────────────────
+// ปกติมิเตอร์ส่งทุกไม่กี่วินาที → ห่างกันเกิน 5 นาทีถือว่าข้อมูลขาดช่วง
+const GAP_MS = 5 * 60 * 1000
+// backend query เป็น "วัน UTC" และแบ่งชั่วโมงด้วย getUTCHours() ของ timestamp ที่เก็บไว้
+// → ขอบวันฝั่งนี้ต้องใช้ UTC ให้ตรงกัน ไม่งั้นตัวเลขจะเหลื่อมกัน 7 ชม.
+const dayStartMs = ds => Date.parse(ds + 'T00:00:00Z')
+const hhmmOf     = ms => new Date(ms).toISOString().slice(11, 16)
+
+// กระจายช่วงเวลา [a,b) ลงถังรายชั่วโมง (หน่วย ms)
+function addSpan(buckets, a, b, day0) {
+  let t = a
+  while (t < b) {
+    const idx = Math.floor((t - day0) / 3600000)
+    if (idx < 0 || idx > 23) break
+    const end = Math.min(b, day0 + (idx + 1) * 3600000)
+    buckets[idx] += end - t
+    t = end
+  }
+}
+
+function coverageOf(rows, ds) {
+  const day0   = dayStartMs(ds)
+  const dayEnd = day0 + 86400000
+  // วันนี้ยังไม่จบ → คิดความครบแค่ถึงตอนนี้ ไม่งั้นจะขึ้นว่าขาดข้อมูลทั้งที่ยังไม่ถึงเวลา
+  const until    = Math.min(dayEnd, Date.now())
+  const expected = Math.max(0, until - day0)
+  const hourMs   = new Float64Array(24)
+  const gaps     = []
+  let covered = 0
+
+  const ts = rows
+    .map(r => +parseTs(r.timestamp))
+    .filter(t => Number.isFinite(t) && t >= day0 && t <= dayEnd)
+    .sort((a, b) => a - b)
+
+  // นับช่วงก่อนจุดแรกและหลังจุดสุดท้ายด้วย ไม่งั้นวันที่มีข้อมูลแค่ชั่วโมงเดียวจะขึ้น 100%
+  const marks = [day0, ...ts, until]
+  for (let i = 1; i < marks.length; i++) {
+    const a = marks[i - 1], b = marks[i]
+    if (b <= a) continue
+    if (b - a <= GAP_MS) { covered += b - a; addSpan(hourMs, a, b, day0) }
+    else gaps.push({ from: a, to: b, mins: (b - a) / 60000 })
+  }
+  gaps.sort((x, y) => y.mins - x.mins)
+
+  const elapsedH = expected / 3600000
+  return {
+    points: ts.length,
+    truncated: rows.length >= 10000,     // backend จำกัด 10,000 จุด/วัน → เกินนั้นข้อมูลท้ายวันถูกตัด
+    partialDay: until < dayEnd,
+    pct: expected > 0 ? covered / expected : 0,
+    first: ts.length ? hhmmOf(ts[0]) : null,
+    last:  ts.length ? hhmmOf(ts[ts.length - 1]) : null,
+    maxGapMin: gaps.length ? gaps[0].mins : 0,
+    gaps: gaps.slice(0, 5).map(g => ({ ...g, fromStr: hhmmOf(g.from), toStr: hhmmOf(g.to) })),
+    // สัดส่วนข้อมูลรายชั่วโมง — null = ชั่วโมงที่ยังไม่ถึง (ของวันนี้) เทียบเฉพาะเวลาที่ผ่านไปจริง
+    hourPct: Array.from({ length: 24 }, (_, h) => {
+      const avail = Math.max(0, Math.min(1, elapsedH - h))
+      return avail <= 0 ? null : Math.min(1, hourMs[h] / (avail * 3600000))
+    }),
+  }
+}
+
+// สีบอกความครบ — เขียว/เหลือง/แดง ใช้ทั้งชิปวันที่ แถบรายชั่วโมง และตัวเลขสรุป
+const covColor = p => (p === null || p === undefined) ? '#333' : p >= 0.95 ? '#2ecc71' : p >= 0.7 ? '#f1c40f' : '#e74c3c'
+
 function todayStr() {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
@@ -112,14 +192,30 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
   const [battShow,  setBattShow]    = useState({ evening: true, night: true, custom: false })
   const [battRec,   setBattRec]     = useState('evening')
   const [battCustom, setBattCustom] = useState({ start: '20:00', end: '04:00' })
-  const [rawCache, setRawCache]     = useState({})   // date -> Float64Array(1440) พลังงานรายนาที
+  const [rawCache, setRawCache]     = useState({})   // date -> { mins, power, cov } จากข้อมูลดิบ
 
+  // ตารางจุดคุ้มทุน — แยกโซล่าเซลล์กับแบตเตอรี่คนละตาราง เงินลงทุนคนละก้อน
+  // ฝั่งโซล่า: เว้นขนาดว่างไว้ = ใช้ค่าที่ระบบแนะนำจากการใช้ไฟจริง
+  // ฝั่งแบต: กรอกความจุเองทั้งหมด (เลือกรุ่นแบตตามที่จะเสนอ ไม่ผูกกับตัวเลขที่ระบบแนะนำ)
+  const [showPaySolar, setShowPaySolar] = useState(true)
+  const [payKw, setPayKw]               = useState('')
+  const [paySun, setPaySun]             = useState(4)
+  const [payInvest, setPayInvest]       = useState(200000)
+
+  const [showPayBatt, setShowPayBatt]     = useState(true)
+  const [payBattKwh, setPayBattKwh]       = useState(10)
+  const [payBattDod, setPayBattDod]       = useState(BATTERY_DOD * 100)
+  const [payBattInvest, setPayBattInvest] = useState(150000)
+
+  const [reportDate, setReportDate] = useState(todayStr())   // วันที่จัดทำรายงานบนหัวเอกสาร
+  const [checkDate, setCheckDate]   = useState(null)  // วันที่กำลังเปิดกราฟตรวจความครบข้อมูล
   const [images, setImages]         = useState([])
   const [sunIntensity, setSunPct]   = useState(96)
   const [busy, setBusy]             = useState('')
 
   const reportRef = useRef(null)
   const scaleRef  = useRef(null)
+  const rawReqRef = useRef({})                        // กันยิง /daily-energy ซ้ำวันเดียวกัน
 
   useEffect(() => {
     if (open && dates.length === 0 && initialDate) addDate(initialDate)
@@ -166,26 +262,44 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
     }
   }
 
-  // การ์ดแบตคิดจากข้อมูลรายนาที (ตัดค่าติดลบ + รองรับช่วงเวลาที่พิมพ์เอง) → ต้องใช้ข้อมูลดิบ
-  // ดึงเฉพาะตอนมีการ์ดแบตโชว์ เพื่อไม่ให้ยิง API เกินจำเป็น
+  // ข้อมูลดิบรายวัน ใช้ร่วมกัน 3 อย่าง: การ์ดแบต (พลังงานรายนาที), ป้ายความครบบนชิปวันที่
+  // และกราฟตรวจข้อมูล → ดึงครั้งเดียวต่อวัน แล้ว cache ไว้
+  async function ensureRaw(ds) {
+    if (!apiBase || rawCache[ds] || rawReqRef.current[ds]) return
+    rawReqRef.current[ds] = true
+    try {
+      const r = await fetch(`${apiBase}/daily-energy/${device}?date=${ds}`)
+      const j = await r.json()
+      const rows = j?.data || []
+      setRawCache(c => ({
+        ...c,
+        [ds]: { mins: minuteEnergyFromRaw(rows), power: minutePowerFromRaw(rows), cov: coverageOf(rows, ds) },
+      }))
+    } catch {
+      delete rawReqRef.current[ds]                    // ให้ลองใหม่ได้ถ้าดึงพลาด
+    }
+  }
+
+  // โหลดข้อมูลดิบของทุกวันที่เลือก (ทีละวัน ไม่ยิงพร้อมกันทั้งหมด)
   useEffect(() => {
-    const anyBatt = battShow.evening || battShow.night || battShow.custom
-    if (!open || !anyBatt || !apiBase) return
+    if (!open || !apiBase) return
     let alive = true
     const missing = dates.filter(ds => cache[ds] && cache[ds] !== 'error' && !rawCache[ds])
     if (!missing.length) return
     ;(async () => {
       for (const ds of missing) {
-        try {
-          const r = await fetch(`${apiBase}/daily-energy/${device}?date=${ds}`)
-          const j = await r.json()
-          if (!alive) return
-          setRawCache(c => ({ ...c, [ds]: minuteEnergyFromRaw(j?.data || []) }))
-        } catch { /* วันไหนดึงไม่ได้ก็ข้ามไป */ }
+        if (!alive) return
+        await ensureRaw(ds)
       }
     })()
     return () => { alive = false }
-  }, [open, battShow.evening, battShow.night, battShow.custom, dates, cache, apiBase, device])
+  }, [open, dates, cache, apiBase, device])
+
+  // เปลี่ยนมิเตอร์/หน่วยกำลังไฟ → ข้อมูลดิบที่ cache ไว้ใช้ไม่ได้แล้ว
+  useEffect(() => {
+    setRawCache({})
+    rawReqRef.current = {}
+  }, [apiBase, device])
 
   function onPickImages(e) {
     const files = Array.from(e.target.files || [])
@@ -210,9 +324,9 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
           hours,
           // การ์ดแบตทั้งหมดคิดจากข้อมูลรายนาทีชุดเดียวกัน + ตัดค่าติดลบ
           // (คิดคนละฐานกันเมื่อไหร่ ช่วงย่อยจะเกินช่วงใหญ่ได้)
-          battEvening: sumMinutes(rawCache[ds], 18 * 60, 0, true),
-          battNight:   sumMinutes(rawCache[ds], 18 * 60, 6 * 60, true),
-          battCustom:  sumMinutes(rawCache[ds], toMin(battCustom.start), toMin(battCustom.end), true),
+          battEvening: sumMinutes(rawCache[ds]?.mins, 18 * 60, 0, true),
+          battNight:   sumMinutes(rawCache[ds]?.mins, 18 * 60, 6 * 60, true),
+          battCustom:  sumMinutes(rawCache[ds]?.mins, toMin(battCustom.start), toMin(battCustom.end), true),
           hasRaw: !!rawCache[ds],
         }
       })
@@ -239,6 +353,34 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
     avg.battCustom  = meanRaw('battCustom')
     return { maxRow, minRow, avg, customDays: withRaw.length }
   }, [rows])
+
+  // ── ตารางจุดคุ้มทุน ────────────────────────────────────────────────────────
+  // ทั้งสองตารางคิดแบบเดียวกัน: พลังงานที่ได้ต่อวัน × ค่าไฟ → ประหยัด/วัน → ×30 → ×12
+  // ต่างกันแค่ที่มาของพลังงาน (แผงผลิตเอง vs แบตคายประจุ) และเงินลงทุนคนละก้อน
+  const saveOf = (energyPerDay, invest) => {
+    const saveDay   = energyPerDay * rate
+    const saveMonth = saveDay * 30              // คิดเดือนละ 30 วัน / ปีละ 12 เดือน (= 360 วัน)
+    const saveYear  = saveMonth * 12
+    return { saveDay, saveMonth, saveYear, years: saveYear > 0 ? invest / saveYear : null }
+  }
+
+  // เว้นขนาดระบบไว้ = ใช้ค่าที่แนะนำจากการใช้ไฟจริง (ค่าเฉลี่ยกลางวัน ÷ ชั่วโมงแดด)
+  const payKwAuto = stats ? stats.avg.solarKw : 0
+  const paybackSolar = useMemo(() => {
+    const kw      = Number(payKw) > 0 ? Number(payKw) : payKwAuto
+    const sun     = Number(paySun) || 0
+    const invest  = Number(payInvest) || 0
+    const prodDay = kw * sun                    // พลังงานที่ผลิตได้ต่อวัน (หน่วย/วัน)
+    return { kw, sun, invest, prodDay, auto: !(Number(payKw) > 0), ...saveOf(prodDay, invest) }
+  }, [payKw, paySun, payInvest, rate, payKwAuto])
+
+  const paybackBatt = useMemo(() => {
+    const kwh    = Number(payBattKwh) || 0
+    const dod    = Number(payBattDod) || 0
+    const invest = Number(payBattInvest) || 0
+    const usable = kwh * (dod / 100)             // ใช้ได้จริงต่อรอบ = ความจุ × DoD
+    return { kwh, dod, invest, usable, ...saveOf(usable, invest) }
+  }, [payBattKwh, payBattDod, payBattInvest, rate])
 
   if (!open) return null
 
@@ -296,7 +438,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
     return pdf
   }
 
-  const fileName = `SolarReport-${(siteName || 'report').replace(/[\\/:*?"<>|\s]+/g, '_')}-${todayStr()}.pdf`
+  const fileName = `SolarReport-${(siteName || 'report').replace(/[\\/:*?"<>|\s]+/g, '_')}-${reportDate || todayStr()}.pdf`
 
   async function exportPdf() {
     setBusy('pdf')
@@ -329,6 +471,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
   const field = { background: DARK_CARD, border: AMBER_BORDER, borderRadius: 8, color: AMBER_DIM, padding: '7px 10px', fontSize: 13, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' }
   const btn   = { background: DARK_CARD, border: AMBER_BORDER, borderRadius: 8, color: AMBER_DIM, padding: '8px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }
   const group = { marginBottom: 20 }
+  const sub   = { fontSize: 11, color: '#999', marginBottom: 4 }
 
   const Check = ({ on, set, children }) => (
     <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: AMBER_DIM, cursor: 'pointer', padding: '4px 0' }}>
@@ -366,8 +509,26 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
         <div style={{ width: 320, flexShrink: 0, background: DARK_BG, borderRight: AMBER_BORDER, overflowY: 'auto', padding: 18 }}>
 
           <div style={group}>
-            <span style={label}>เลือกวันที่ใส่ในตาราง</span>
+            <span style={label}>วันที่จัดทำรายงาน</span>
             <div style={{ display: 'flex', gap: 6 }}>
+              <input type="date" value={reportDate}
+                     onChange={e => setReportDate(e.target.value || todayStr())} style={{ ...field, flex: 1 }} />
+              <button onClick={() => setReportDate(todayStr())} disabled={reportDate === todayStr()}
+                      style={{ ...btn, padding: '7px 10px', fontSize: 11, opacity: reportDate === todayStr() ? 0.45 : 1 }}>วันนี้</button>
+            </div>
+            <div style={{ fontSize: 10, color: '#777', marginTop: 4 }}>
+              โชว์บนหัวรายงาน — ย้อนวันได้ถ้าออกรายงานให้ลูกค้าย้อนหลัง
+            </div>
+          </div>
+
+          <div style={group}>
+            <span style={label}>เลือกวันที่ใส่ในตาราง</span>
+
+            {/* ปฏิทิน — วันไหนมีข้อมูลจะโชว์หน่วยที่ใช้ กดเลือก/เอาออกได้เลย */}
+            <MiniCalendar apiBase={apiBase} selected={dates}
+                          onToggle={ds => (dates.includes(ds) ? removeDate(ds) : addDate(ds))} />
+
+            <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
               <input type="date" value={pickDate} min={DATA_MIN_DATE || undefined}
                      onChange={e => setPickDate(e.target.value)} style={{ ...field, flex: 1 }} />
               <button onClick={() => addDate(pickDate)} style={{ ...btn, padding: '7px 12px' }}>+ เพิ่ม</button>
@@ -376,9 +537,17 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
               {dates.map(ds => {
                 const bad = cache[ds] === 'error'
                 const busyDs = pending.includes(ds)
+                const cov = rawCache[ds]?.cov
                 return (
-                  <span key={ds} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: DARK_CARD, border: `1px solid ${bad ? '#a33' : 'rgba(255,184,0,0.4)'}`, borderRadius: 20, padding: '4px 6px 4px 10px', fontSize: 11, color: bad ? '#e88' : AMBER_DIM, opacity: busyDs ? 0.5 : 1 }}>
+                  <span key={ds} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: DARK_CARD, border: `1px solid ${bad ? '#a33' : 'rgba(255,184,0,0.4)'}`, borderRadius: 20, padding: '4px 6px 4px 8px', fontSize: 11, color: bad ? '#e88' : AMBER_DIM, opacity: busyDs ? 0.5 : 1 }}>
+                    {/* จุดสีบอกความครบของข้อมูลวันนั้น — เทา = ยังโหลดไม่เสร็จ */}
+                    <span title={cov ? `ข้อมูลครบ ${Math.round(cov.pct * 100)}%` : 'กำลังตรวจข้อมูล…'}
+                          style={{ width: 7, height: 7, borderRadius: '50%', background: cov ? covColor(cov.pct) : '#555', flexShrink: 0 }} />
                     {thShort(ds)}{bad ? ' (ไม่มีข้อมูล)' : ''}
+                    {!bad && (
+                      <button onClick={() => { setCheckDate(ds); ensureRaw(ds) }} title="ดูกราฟ / เช็คความครบของข้อมูล"
+                              style={{ background: 'none', border: 'none', color: AMBER, cursor: 'pointer', fontSize: 12, lineHeight: 1, padding: '0 1px' }}>📈</button>
+                    )}
                     <button onClick={() => removeDate(ds)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px' }}>×</button>
                   </span>
                 )
@@ -453,6 +622,68 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
           </div>
 
           <div style={group}>
+            <span style={label}>ตารางจุดคุ้มทุน</span>
+
+            <Check on={showPaySolar} set={setShowPaySolar}>ตารางคืนทุน — โซล่าเซลล์</Check>
+            {showPaySolar && (
+              <div style={{ margin: '6px 0 14px 23px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div>
+                  <div style={sub}>ขนาดกำลังการติดตั้ง (kW)</div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input type="number" step="0.01" min="0" value={payKw}
+                           placeholder={payKwAuto ? `แนะนำ ${n2(payKwAuto)}` : 'แนะนำอัตโนมัติ'}
+                           onChange={e => setPayKw(e.target.value)} style={{ ...field, flex: 1 }} />
+                    <button onClick={() => setPayKw('')} disabled={paybackSolar.auto}
+                            style={{ ...btn, padding: '7px 8px', fontSize: 10, opacity: paybackSolar.auto ? 0.45 : 1 }}>ค่าแนะนำ</button>
+                  </div>
+                </div>
+                <div>
+                  <div style={sub}>ชั่วโมงแดดต่อวัน (ชม.)</div>
+                  <input type="number" step="0.1" min="0" value={paySun}
+                         onChange={e => setPaySun(e.target.value)} style={field} />
+                </div>
+                <div>
+                  <div style={sub}>เงินลงทุนค่าโซล่าเซลล์ (บาท)</div>
+                  <input type="number" step="1000" min="0" value={payInvest}
+                         onChange={e => setPayInvest(e.target.value)} style={field} />
+                </div>
+              </div>
+            )}
+
+            <Check on={showPayBatt} set={setShowPayBatt}>ตารางคืนทุน — แบตเตอรี่</Check>
+            {showPayBatt && (
+              <div style={{ margin: '6px 0 10px 23px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div>
+                  <div style={sub}>ความจุแบตเตอรี่ที่จะติดตั้ง (kWh)</div>
+                  <input type="number" step="0.01" min="0" value={payBattKwh}
+                         onChange={e => setPayBattKwh(e.target.value)} style={field} />
+                  {stats && (
+                    <div style={{ fontSize: 10, color: '#777', marginTop: 4 }}>
+                      อ้างอิง: การ์ดแนะนำแบตด้านบนคำนวณได้ {n2(stats.avg.battEvening / BATTERY_DOD)} kWh (หัวค่ำ)
+                      / {n2(stats.avg.battNight / BATTERY_DOD)} kWh (ทั้งคืน)
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <div style={sub}>ใช้งานได้จริงต่อรอบ — DoD (%)</div>
+                  <input type="number" step="1" min="1" max="100" value={payBattDod}
+                         onChange={e => setPayBattDod(e.target.value)} style={field} />
+                </div>
+                <div>
+                  <div style={sub}>เงินลงทุนค่าแบตเตอรี่ (บาท)</div>
+                  <input type="number" step="1000" min="0" value={payBattInvest}
+                         onChange={e => setPayBattInvest(e.target.value)} style={field} />
+                </div>
+              </div>
+            )}
+
+            <div style={{ fontSize: 10, color: '#777', lineHeight: 1.5 }}>
+              ฝั่งโซล่าเซลล์เว้นช่องขนาดไว้ = ใช้ค่าที่คำนวณจากการใช้ไฟจริง · ฝั่งแบตเตอรี่กรอกความจุเอง ·
+              ใช้อัตราค่าไฟ {n2(rate)} บาท/Unit จากช่องด้านบน · คิดเดือนละ 30 วัน ปีละ 12 เดือน
+            </div>
+          </div>
+
+          <div style={group}>
             <span style={label}>รูปแบบการติดตั้ง (เลือกได้หลายรูป)</span>
             <input type="file" accept="image/*" multiple onChange={onPickImages}
                    style={{ ...field, padding: 7, fontSize: 11, cursor: 'pointer' }} />
@@ -479,22 +710,31 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
             {loading && <div style={{ color: AMBER, fontSize: 13, marginBottom: 10, textAlign: 'center' }}>กำลังโหลดข้อมูล…</div>}
             <ReportDoc
               innerRef={reportRef}
-              siteName={siteName} rows={rows} stats={stats} rate={rate}
+              siteName={siteName} rows={rows} stats={stats} rate={rate} reportDate={reportDate}
               showMax={showMax} showMin={showMin} showAvg={showAvg}
               solarShow={solarShow} solarRec={solarRec}
               battShow={battShow} battRec={battRec} battCustom={battCustom}
+              showPaySolar={showPaySolar} paybackSolar={paybackSolar}
+              showPayBatt={showPayBatt}  paybackBatt={paybackBatt}
               images={images} sunIntensity={sunIntensity}
             />
           </div>
         </div>
       </div>
+
+      {checkDate && (
+        <DayCheckModal date={checkDate} raw={rawCache[checkDate]} solar={cache[checkDate]}
+                       onClose={() => setCheckDate(null)} />
+      )}
     </div>
   )
 }
 
 // ── เอกสารรายงาน (โทนสว่าง กว้างคงที่ 900px เพื่อให้ PDF ออกมาคมและคาดเดาได้) ──
-function ReportDoc({ innerRef, siteName, rows, stats, rate, showMax, showMin, showAvg,
-                     solarShow, solarRec, battShow, battRec, battCustom, images, sunIntensity }) {
+function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax, showMin, showAvg,
+                     solarShow, solarRec, battShow, battRec, battCustom,
+                     showPaySolar, paybackSolar, showPayBatt, paybackBatt,
+                     images, sunIntensity }) {
   const sectionTitle = {
     fontSize: 17, fontWeight: 600, color: R.text, marginBottom: 18,
     display: 'flex', alignItems: 'center', gap: 8,
@@ -509,6 +749,10 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, showMax, showMin, sh
 
   const maxDate = stats?.maxRow?.date
   const minDate = stats?.minRow?.date
+
+  // ขนาดระบบเป็น 0 (ยังไม่เลือกวัน และไม่ได้พิมพ์เอง) → ตารางคืนทุนจะเป็นศูนย์ทั้งใบ ซ่อนไว้ดีกว่า
+  const paySolarOn = showPaySolar && paybackSolar.kw  > 0
+  const payBattOn  = showPayBatt  && paybackBatt.kwh > 0
 
   const solarCards = []
   if (stats) {
@@ -542,7 +786,7 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, showMax, showMin, sh
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 14, color: R.muted }}>ลูกค้า</div>
         <h1 style={{ fontSize: 26, fontWeight: 700, color: '#1a1a1a', margin: '4px 0' }}>{siteName || '—'}</h1>
-        <div style={{ fontSize: 14, color: R.muted }}>วันที่จัดทำรายงาน: {thFull(todayStr())}</div>
+        <div style={{ fontSize: 14, color: R.muted }}>วันที่จัดทำรายงาน: {thFull(reportDate || todayStr())}</div>
       </div>
 
       <hr style={divider} />
@@ -649,7 +893,46 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, showMax, showMin, sh
         </div>
       </>}
 
-      {/* Section 4 — การออกแบบติดตั้ง */}
+      {/* Section 4 — จุดคุ้มทุน (โซล่าเซลล์ / แบตเตอรี่ แยกตาราง เงินลงทุนคนละก้อน) */}
+      {(paySolarOn || payBattOn) && <>
+        <hr style={divider} data-break />
+        <div style={sectionTitle}><span style={bar} />การประหยัดไฟฟ้าและจุดคุ้มทุน</div>
+
+        {paySolarOn && (
+          <PaybackTable
+            title="คำนวณการประหยัดไฟฟ้าและการคืนทุน — ระบบโซล่าเซลล์"
+            invest={paybackSolar.invest} years={paybackSolar.years}
+            rows={[
+              { label: 'ขนาดกำลังการติดตั้งระบบโซล่าเซลล์', value: n2(paybackSolar.kw),      unit: 'กิโลวัตต์',  color: R.red, bold: true },
+              { label: 'คำนวณชั่วโมงแดดต่อวัน',              value: n2(paybackSolar.sun),     unit: 'ชั่วโมง/วัน' },
+              { label: 'กำลังการผลิตของโซล่าเซลล์ต่อวัน',     value: n2(paybackSolar.prodDay), unit: 'หน่วย/วัน' },
+              { label: 'อัตราค่าไฟฟ้าเฉลี่ยต่อหน่วย',         value: n2(rate),                 unit: 'บาท/หน่วย' },
+              { label: 'อัตราการประหยัดต่อวัน',              value: nL(paybackSolar.saveDay),   unit: 'บาท/วัน' },
+              { label: 'อัตราการประหยัดต่อเดือน',            value: nL(paybackSolar.saveMonth), unit: 'บาท/เดือน' },
+              { label: 'อัตราการประหยัดต่อปี',               value: nL(paybackSolar.saveYear),  unit: 'บาท/ปี' },
+            ]} />
+        )}
+
+        {payBattOn && (
+          <div style={{ marginTop: paySolarOn ? 22 : 0 }} data-break>
+            <PaybackTable
+              title="คำนวณการประหยัดไฟฟ้าและการคืนทุน — ระบบแบตเตอรี่"
+              invest={paybackBatt.invest} years={paybackBatt.years}
+              note="คิดจากการเก็บไฟส่วนเกินที่โซล่าเซลล์ผลิตได้ตอนกลางวัน มาใช้แทนไฟจากการไฟฟ้าในช่วงกลางคืน"
+              rows={[
+                { label: 'ขนาดความจุแบตเตอรี่ที่ติดตั้ง',       value: n2(paybackBatt.kwh),  unit: 'kWh', color: R.red, bold: true },
+                { label: 'ใช้งานได้จริงต่อรอบ (DoD)',           value: n2(paybackBatt.dod),  unit: '%' },
+                { label: 'พลังงานที่ใช้จากแบตเตอรี่ต่อวัน',      value: n2(paybackBatt.usable), unit: 'หน่วย/วัน' },
+                { label: 'อัตราค่าไฟฟ้าเฉลี่ยต่อหน่วย',         value: n2(rate),                  unit: 'บาท/หน่วย' },
+                { label: 'อัตราการประหยัดต่อวัน',              value: nL(paybackBatt.saveDay),   unit: 'บาท/วัน' },
+                { label: 'อัตราการประหยัดต่อเดือน',            value: nL(paybackBatt.saveMonth), unit: 'บาท/เดือน' },
+                { label: 'อัตราการประหยัดต่อปี',               value: nL(paybackBatt.saveYear),  unit: 'บาท/ปี' },
+              ]} />
+          </div>
+        )}
+      </>}
+
+      {/* Section 5 — การออกแบบติดตั้ง */}
       {images.length > 0 && <>
         <hr style={divider} data-break />
         <div style={sectionTitle}><span style={bar} />การออกแบบการติดตั้งแผงโซลาร์เซลล์</div>
@@ -692,6 +975,268 @@ function LegendRow({ color, children }) {
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       <span style={{ width: 18, height: 18, borderRadius: 3, background: color, flexShrink: 0 }} />
       <span>{children}</span>
+    </div>
+  )
+}
+
+// ── ตารางจุดคุ้มทุน — เลย์เอาต์/สีตามไฟล์ Excel ที่ใช้เสนอลูกค้าอยู่แล้ว ──────
+const PAY_HEAD    = '#ed7d31'
+const PAY_INVEST  = '#92d050'
+const PAY_PAYBACK = '#ffff00'
+const PAY_LINE    = '#4a4a4a'
+
+function PaybackTable({ title, rows, invest, years, note }) {
+  const cell  = { border: `1px solid ${PAY_LINE}`, padding: '9px 14px' }
+  const num   = { ...cell, textAlign: 'center', fontWeight: 700, width: '22%' }
+  const unitC = { ...cell, textAlign: 'center', width: '20%' }
+
+  const Row = ({ label, value, unit, bg, color, bold }) => (
+    <tr style={bg ? { background: bg } : undefined}>
+      <td style={{ ...cell, fontWeight: bold ? 700 : 400 }}>{label}</td>
+      <td style={{ ...num, color: color || R.text }}>{value}</td>
+      <td style={{ ...unitC, color: color || R.muted }}>{unit}</td>
+    </tr>
+  )
+
+  return (
+    <>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+        <thead>
+          <tr>
+            <th colSpan={3} style={{ border: `1px solid ${PAY_LINE}`, background: PAY_HEAD, color: '#fff', fontWeight: 700, padding: '10px 12px' }}>
+              {title}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => <Row key={i} {...r} />)}
+          <tr><td colSpan={3} style={{ height: 10, border: 'none' }} /></tr>
+          <Row label="เงินลงทุน" value={nL(invest)} unit="บาท" bg={PAY_INVEST} bold />
+          {/* วันที่ไม่มีข้อมูล → ประหยัดได้ ~0 แล้วคืนทุนจะเป็นเลขหลักล้านปี ตัดเป็น "> 100" แทน */}
+          <Row label="ระยะเวลาคืนทุน"
+               value={years === null ? '--' : years > 100 ? '> 100' : n2(years)}
+               unit="ปี" bg={PAY_PAYBACK} color={R.red} bold />
+        </tbody>
+      </table>
+      {note && <div style={{ fontSize: 12, color: R.muted, marginTop: 8 }}>* {note}</div>}
+    </>
+  )
+}
+
+// ── ปฏิทินย่อในแผงตั้งค่า — โชว์ว่าวันไหนมีข้อมูล กดเลือกใส่รายงานได้เลย ──────
+function MiniCalendar({ apiBase, selected, onToggle }) {
+  const now = new Date()
+  const [year, setYear]       = useState(now.getFullYear())
+  const [month, setMonth]     = useState(now.getMonth() + 1)
+  const [days, setDays]       = useState({})       // 'YYYY-MM-DD' -> { energy, bill }
+  const [loading, setLoading] = useState(false)
+  const cache = useRef({})
+
+  const mp = String(month).padStart(2, '0')
+
+  useEffect(() => {
+    if (!apiBase) return
+    const key = `${year}-${mp}`
+    if (cache.current[key]) { setDays(cache.current[key]); setLoading(false); return }
+    let alive = true
+    setLoading(true)
+    fetch(`${apiBase}/calendar?year=${year}&month=${mp}`)
+      .then(r => r.json())
+      .then(list => {
+        const map = {}
+        ;(Array.isArray(list) ? list : []).forEach(e => {
+          const ds = String(e.start || '').slice(0, 10)
+          // backend ตอบมาทีละ 2 เดือน (เดือนนี้ + เดือนก่อน) → กรองเฉพาะเดือนที่กำลังดู
+          if (!ds.startsWith(`${year}-${mp}`)) return
+          if (!map[ds]) map[ds] = { energy: null, bill: null }
+          const v = parseFloat(String(e.title ?? '').replace(/[฿,\s]/g, ''))
+          if (e.extendedProps?.type === 'energy') map[ds].energy = Number.isFinite(v) ? v : null
+          if (e.extendedProps?.type === 'bill')   map[ds].bill   = Number.isFinite(v) ? v : null
+        })
+        cache.current[key] = map
+        if (alive) setDays(map)
+      })
+      .catch(() => { if (alive) setDays({}) })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [apiBase, year, mp])
+
+  const prev = () => (month === 1 ? (setMonth(12), setYear(y => y - 1)) : setMonth(m => m - 1))
+  const next = () => (month === 12 ? (setMonth(1), setYear(y => y + 1)) : setMonth(m => m + 1))
+
+  const firstDow    = new Date(year, month - 1, 1).getDay()
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const cells = [...Array(firstDow).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)]
+
+  const nav = { background: DARK_CARD, border: AMBER_BORDER, borderRadius: 6, color: AMBER, fontWeight: 700, fontSize: 13, padding: '2px 10px', cursor: 'pointer', lineHeight: 1.6 }
+
+  return (
+    <div style={{ background: DARK_CARD, border: AMBER_BORDER, borderRadius: 8, padding: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <button onClick={prev} style={nav}>&lt;</button>
+        <span style={{ fontSize: 12, fontWeight: 700, color: AMBER }}>
+          {TH_MONTH_FULL[month - 1]} {year + 543}
+        </span>
+        <button onClick={next} style={nav}>&gt;</button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 2 }}>
+        {['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'].map((d, i) => (
+          <div key={i} style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,184,0,0.6)', textAlign: 'center', padding: '2px 0' }}>{d}</div>
+        ))}
+        {cells.map((d, i) => {
+          if (!d) return <div key={i} />
+          const ds       = `${year}-${mp}-${String(d).padStart(2, '0')}`
+          const ev       = days[ds]
+          const hasData  = !!ev && ev.energy !== null
+          const locked   = DATA_MIN_DATE && ds < DATA_MIN_DATE
+          const isSel    = selected.includes(ds)
+          const clickable = hasData && !locked
+          return (
+            <div key={i} onClick={() => clickable && onToggle(ds)}
+                 title={hasData ? `${n2(ev.energy)} Unit${ev.bill !== null ? ` · ${n2(ev.bill)} ฿` : ''}` : 'ไม่มีข้อมูล'}
+                 style={{
+                   minHeight: 32, borderRadius: 4, padding: '2px 3px', boxSizing: 'border-box',
+                   background: isSel ? 'rgba(255,184,0,0.22)' : hasData ? 'rgba(255,184,0,0.06)' : 'transparent',
+                   border: isSel ? `1px solid ${AMBER}` : hasData ? '1px solid rgba(255,184,0,0.25)' : '1px solid rgba(255,255,255,0.05)',
+                   cursor: clickable ? 'pointer' : 'default',
+                   opacity: locked ? 0.25 : 1,
+                   display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, lineHeight: 1.1, color: isSel ? AMBER : hasData ? AMBER_DIM : '#555' }}>{d}</span>
+              {hasData && <span style={{ fontSize: 7.5, lineHeight: 1.2, color: isSel ? AMBER_DIM : '#8a8a8a' }}>{n2(ev.energy)}</span>}
+            </div>
+          )
+        })}
+      </div>
+
+      <div style={{ fontSize: 10, color: '#777', marginTop: 6, lineHeight: 1.5 }}>
+        {loading ? 'กำลังโหลดปฏิทิน…'
+                 : Object.keys(days).length ? 'วันที่มีตัวเลข = มีข้อมูล · กดเพื่อเลือก/เอาออก'
+                 : 'เดือนนี้ยังไม่มีข้อมูล'}
+      </div>
+    </div>
+  )
+}
+
+// ── กราฟตรวจความครบของข้อมูลรายวัน ────────────────────────────────────────────
+function DayCheckModal({ date, raw, solar, onClose }) {
+  const canvasRef = useRef(null)
+  const instRef   = useRef(null)
+  const cov   = raw?.cov
+  const power = raw?.power
+
+  useEffect(() => {
+    if (!power || !canvasRef.current) return
+    let alive = true
+    ;(async () => {
+      const { Chart, registerables } = await import('chart.js')
+      Chart.register(...registerables)
+      if (!alive || !canvasRef.current) return
+      instRef.current?.destroy()
+      const labels = Array.from({ length: 1440 }, (_, i) => `${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}`)
+      instRef.current = new Chart(canvasRef.current.getContext('2d'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'กำลังไฟ (kW)', data: power,
+            borderColor: AMBER, backgroundColor: 'rgba(255,184,0,0.12)',
+            borderWidth: 1, pointRadius: 0, fill: true, tension: 0.25,
+            spanGaps: false,          // นาทีที่ไม่มีข้อมูล = เส้นขาด เห็นช่วงที่หายทันที
+          }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: false,
+          plugins: { legend: { display: false }, tooltip: { intersect: false, mode: 'index' } },
+          scales: {
+            x: { ticks: { color: '#888', font: { size: 9 }, maxTicksLimit: 13, autoSkip: true }, grid: { color: 'rgba(255,255,255,0.05)' } },
+            y: { ticks: { color: '#888', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
+          },
+        },
+      })
+    })()
+    return () => { alive = false; instRef.current?.destroy(); instRef.current = null }
+  }, [power])
+
+  const Tile = ({ title, value, color }) => (
+    <div style={{ flex: 1, background: DARK_CARD, border: AMBER_BORDER, borderRadius: 8, padding: '8px 10px', minWidth: 0 }}>
+      <div style={{ fontSize: 10, color: '#8a8a8a', marginBottom: 2 }}>{title}</div>
+      <div style={{ fontSize: 16, fontWeight: 800, color: color || AMBER, whiteSpace: 'nowrap' }}>{value}</div>
+    </div>
+  )
+
+  return (
+    <div onClick={e => { if (e.target === e.currentTarget) onClose() }}
+         style={{ position: 'fixed', inset: 0, zIndex: 1000001, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ background: DARK_BG, border: AMBER_BORDER, borderRadius: 14, width: '100%', maxWidth: 760, maxHeight: '92vh', overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ flex: 1, fontSize: 14, fontWeight: 700, color: AMBER }}>
+            ตรวจความครบของข้อมูล · {thFull(date)}
+          </div>
+          <button onClick={onClose} style={{ background: DARK_CARD, border: '1.5px solid #666', borderRadius: 8, color: '#999', padding: '6px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>ปิด</button>
+        </div>
+
+        {!cov ? (
+          <div style={{ color: AMBER_DIM, fontSize: 13, padding: '40px 0', textAlign: 'center' }}>กำลังโหลดข้อมูลดิบ…</div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Tile title="ข้อมูลครบ" value={`${(cov.pct * 100).toFixed(1)}%`} color={covColor(cov.pct)} />
+              <Tile title="จำนวนจุดข้อมูล" value={cov.points.toLocaleString('en-US')} />
+              <Tile title="ช่วงข้อมูล" value={cov.first ? `${cov.first}–${cov.last}` : '--'} />
+              <Tile title="ขาดนานสุด"
+                    value={cov.maxGapMin >= 1 ? `${Math.round(cov.maxGapMin)} นาที` : 'ไม่มี'}
+                    color={cov.maxGapMin >= 30 ? '#e74c3c' : cov.maxGapMin >= 5 ? '#f1c40f' : '#2ecc71'} />
+            </div>
+
+            {cov.partialDay && (
+              <div style={{ fontSize: 11, color: AMBER_DIM }}>ℹ วันนี้ยังไม่จบวัน — คิด % จากเวลาที่ผ่านไปแล้วเท่านั้น</div>
+            )}
+            {cov.truncated && (
+              <div style={{ fontSize: 11, color: '#e88' }}>⚠ backend ส่งข้อมูลมาสูงสุด 10,000 จุด/วัน — ข้อมูลท้ายวันอาจถูกตัด</div>
+            )}
+
+            {/* แถบรายชั่วโมง — เห็นทันทีว่าชั่วโมงไหนข้อมูลหาย */}
+            <div>
+              <div style={{ fontSize: 11, color: '#8a8a8a', marginBottom: 4 }}>ความครบรายชั่วโมง (00–23)</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(24,1fr)', gap: 2 }}>
+                {cov.hourPct.map((p, h) => (
+                  <div key={h} title={p === null ? `${hhmm(h)} ยังไม่ถึงเวลา` : `${hhmm(h)} · ${(p * 100).toFixed(0)}%`}
+                       style={{ height: 22, borderRadius: 3, background: p === null ? '#262626' : covColor(p), opacity: p === null ? 1 : 0.35 + p * 0.65 }} />
+                ))}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#666', marginTop: 2 }}>
+                <span>00</span><span>06</span><span>12</span><span>18</span><span>23</span>
+              </div>
+            </div>
+
+            <div style={{ height: 220, background: DARK_CARD, border: AMBER_BORDER, borderRadius: 8, padding: 8 }}>
+              <canvas ref={canvasRef} />
+            </div>
+
+            {solar && solar !== 'error' && (
+              <div style={{ fontSize: 12, color: AMBER_DIM }}>
+                รวมทั้งวัน {n2(solar.totalEnergyKwh)} Unit · กลางวัน {n2(solar.dayEnergy)} · กลางคืน {n2(solar.nightEnergy)}
+              </div>
+            )}
+
+            {cov.gaps.length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, color: '#8a8a8a', marginBottom: 4 }}>ช่วงที่ข้อมูลขาด (เกิน 5 นาที)</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {cov.gaps.map((g, i) => (
+                    <span key={i} style={{ fontSize: 11, color: '#e88', background: 'rgba(231,76,60,0.12)', border: '1px solid rgba(231,76,60,0.35)', borderRadius: 6, padding: '3px 8px' }}>
+                      {g.fromStr}–{g.toStr} ({Math.round(g.mins)} นาที)
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   )
 }
