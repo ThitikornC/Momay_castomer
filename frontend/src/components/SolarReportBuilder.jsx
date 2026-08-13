@@ -188,10 +188,14 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
   const [showMin, setShowMin] = useState(true)
   const [showAvg, setShowAvg] = useState(true)
 
-  const [solarShow, setSolarShow]   = useState({ max: true, min: true, avg: true })
+  const [solarShow, setSolarShow]   = useState({ max: true, min: true, avg: true, manual: false })
   const [solarRec,  setSolarRec]    = useState('avg')
-  const [battShow,  setBattShow]    = useState({ evening: true, night: true, custom: false })
+  const [battShow,  setBattShow]    = useState({ evening: true, night: true, custom: false, manual: false })
   const [battRec,   setBattRec]     = useState('evening')
+
+  // การ์ดที่กรอกตัวเลขเอง — ไว้เสนอขนาดที่ลูกค้าอยากได้ ไม่ต้องอิงสูงสุด/ต่ำสุด/เฉลี่ย
+  const [solarManual, setSolarManual] = useState({ label: 'ตามที่ลูกค้าต้องการ', day: '', kw: '' })
+  const [battManual,  setBattManual]  = useState({ label: 'ตามที่ลูกค้าต้องการ', energy: '', kwh: '' })
   const [battCustom, setBattCustom] = useState({ start: '20:00', end: '04:00' })
   const [rawCache, setRawCache]     = useState({})   // date -> { mins, power, cov } จากข้อมูลดิบ
 
@@ -210,6 +214,8 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
 
   const [reportDate, setReportDate] = useState(todayStr())   // วันที่จัดทำรายงานบนหัวเอกสาร
   const [checkDate, setCheckDate]   = useState(null)  // วันที่กำลังเปิดกราฟตรวจความครบข้อมูล
+  const [clientName, setClientName] = useState('')    // ว่าง = ใช้ชื่อจากทะเบียนห้อง (siteName)
+  const [reportNote, setReportNote] = useState('')    // หมายเหตุท้ายรายงาน พิมพ์เอง
   const [images, setImages]         = useState([])
   const [sunIntensity, setSunPct]   = useState(96)
   const [busy, setBusy]             = useState('')
@@ -510,6 +516,19 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
         <div style={{ width: 320, flexShrink: 0, background: DARK_BG, borderRight: AMBER_BORDER, overflowY: 'auto', padding: 18 }}>
 
           <div style={group}>
+            <span style={label}>ชื่อลูกค้าบนหัวรายงาน</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input type="text" value={clientName} placeholder={siteName || 'พิมพ์ชื่อลูกค้า'}
+                     onChange={e => setClientName(e.target.value)} style={{ ...field, flex: 1 }} />
+              <button onClick={() => setClientName('')} disabled={!clientName}
+                      style={{ ...btn, padding: '7px 10px', fontSize: 11, opacity: clientName ? 1 : 0.45 }}>ค่าเดิม</button>
+            </div>
+            <div style={{ fontSize: 10, color: '#777', marginTop: 4 }}>
+              เว้นว่าง = ใช้ชื่อจากทะเบียนห้อง{siteName ? ` (${siteName})` : ''}
+            </div>
+          </div>
+
+          <div style={group}>
             <span style={label}>วันที่จัดทำรายงาน</span>
             <div style={{ display: 'flex', gap: 6 }}>
               <input type="date" value={reportDate}
@@ -576,10 +595,28 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
             <Check on={solarShow.max} set={v => setSolarShow(s => ({ ...s, max: v }))}>วันที่ใช้ไฟสูงสุด</Check>
             <Check on={solarShow.min} set={v => setSolarShow(s => ({ ...s, min: v }))}>วันที่ใช้ไฟน้อยสุด</Check>
             <Check on={solarShow.avg} set={v => setSolarShow(s => ({ ...s, avg: v }))}>ค่าเฉลี่ย</Check>
+            <Check on={solarShow.manual} set={v => setSolarShow(s => ({ ...s, manual: v }))}>กรอกเอง</Check>
+            {solarShow.manual && (
+              <div style={{ margin: '4px 0 0 23px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <input type="text" value={solarManual.label} placeholder="ชื่อการ์ด"
+                       onChange={e => setSolarManual(s => ({ ...s, label: e.target.value }))}
+                       style={{ ...field, padding: '5px 8px', fontSize: 12 }} />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input type="number" step="0.01" min="0" value={solarManual.day} placeholder="ใช้ไฟกลางวัน (Unit)"
+                         onChange={e => setSolarManual(s => ({ ...s, day: e.target.value }))}
+                         style={{ ...field, padding: '5px 8px', fontSize: 12, flex: 1 }} />
+                  <input type="number" step="0.01" min="0" value={solarManual.kw} placeholder="ขนาด (kW)"
+                         onChange={e => setSolarManual(s => ({ ...s, kw: e.target.value }))}
+                         style={{ ...field, padding: '5px 8px', fontSize: 12, flex: 1 }} />
+                </div>
+                <div style={{ fontSize: 10, color: '#777' }}>ประหยัด/วัน–ปี คำนวณจากหน่วยที่กรอก × อัตราค่าไฟ</div>
+              </div>
+            )}
             <div style={{ ...label, marginTop: 12, fontSize: 11, color: '#999' }}>เลือกอันที่จะติดป้าย “แนะนำ”</div>
             <Radio name="srec" val="max" cur={solarRec} set={setSolarRec} disabled={!solarShow.max}>วันที่ใช้ไฟสูงสุด</Radio>
             <Radio name="srec" val="min" cur={solarRec} set={setSolarRec} disabled={!solarShow.min}>วันที่ใช้ไฟน้อยสุด</Radio>
             <Radio name="srec" val="avg" cur={solarRec} set={setSolarRec} disabled={!solarShow.avg}>ค่าเฉลี่ย</Radio>
+            <Radio name="srec" val="manual" cur={solarRec} set={setSolarRec} disabled={!solarShow.manual}>ที่กรอกเอง</Radio>
             <Radio name="srec" val=""    cur={solarRec} set={setSolarRec}>ไม่แนะนำอันไหน</Radio>
           </div>
 
@@ -588,6 +625,22 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
             <Check on={battShow.evening} set={v => setBattShow(s => ({ ...s, evening: v }))}>สำรองช่วงหัวค่ำ (18:00–00:00)</Check>
             <Check on={battShow.night}   set={v => setBattShow(s => ({ ...s, night: v }))}>สำรองทั้งคืน (18:00–06:00)</Check>
             <Check on={battShow.custom}  set={v => setBattShow(s => ({ ...s, custom: v }))}>กำหนดช่วงเวลาเอง</Check>
+            <Check on={battShow.manual}  set={v => setBattShow(s => ({ ...s, manual: v }))}>กรอกเอง</Check>
+            {battShow.manual && (
+              <div style={{ margin: '4px 0 6px 23px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <input type="text" value={battManual.label} placeholder="ชื่อการ์ด"
+                       onChange={e => setBattManual(s => ({ ...s, label: e.target.value }))}
+                       style={{ ...field, padding: '5px 8px', fontSize: 12 }} />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input type="number" step="0.01" min="0" value={battManual.energy} placeholder="พลังงานที่สำรอง (Unit)"
+                         onChange={e => setBattManual(s => ({ ...s, energy: e.target.value }))}
+                         style={{ ...field, padding: '5px 8px', fontSize: 12, flex: 1 }} />
+                  <input type="number" step="0.01" min="0" value={battManual.kwh} placeholder="ความจุ (kWh)"
+                         onChange={e => setBattManual(s => ({ ...s, kwh: e.target.value }))}
+                         style={{ ...field, padding: '5px 8px', fontSize: 12, flex: 1 }} />
+                </div>
+              </div>
+            )}
             {battShow.custom && (
               <div style={{ margin: '4px 0 0 23px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -619,6 +672,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
             <Radio name="brec" val="evening" cur={battRec} set={setBattRec} disabled={!battShow.evening}>สำรองช่วงหัวค่ำ</Radio>
             <Radio name="brec" val="night"   cur={battRec} set={setBattRec} disabled={!battShow.night}>สำรองทั้งคืน</Radio>
             <Radio name="brec" val="custom"  cur={battRec} set={setBattRec} disabled={!battShow.custom}>ช่วงเวลาที่กำหนดเอง</Radio>
+            <Radio name="brec" val="manual"  cur={battRec} set={setBattRec} disabled={!battShow.manual}>ที่กรอกเอง</Radio>
             <Radio name="brec" val=""        cur={battRec} set={setBattRec}>ไม่แนะนำอันไหน</Radio>
           </div>
 
@@ -685,6 +739,16 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
           </div>
 
           <div style={group}>
+            <span style={label}>หมายเหตุท้ายรายงาน</span>
+            <textarea value={reportNote} onChange={e => setReportNote(e.target.value)} rows={4}
+                      placeholder="พิมพ์หมายเหตุที่จะให้ขึ้นท้ายรายงาน เช่น เงื่อนไขราคา ระยะเวลารับประกัน…"
+                      style={{ ...field, resize: 'vertical', lineHeight: 1.6 }} />
+            <div style={{ fontSize: 10, color: '#777', marginTop: 4 }}>
+              เว้นว่าง = ไม่ขึ้นหัวข้อนี้ในรายงาน · ขึ้นบรรทัดใหม่ได้
+            </div>
+          </div>
+
+          <div style={group}>
             <span style={label}>รูปแบบการติดตั้ง (เลือกได้หลายรูป)</span>
             <input type="file" accept="image/*" multiple onChange={onPickImages}
                    style={{ ...field, padding: 7, fontSize: 11, cursor: 'pointer' }} />
@@ -711,7 +775,8 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
             {loading && <div style={{ color: AMBER, fontSize: 13, marginBottom: 10, textAlign: 'center' }}>กำลังโหลดข้อมูล…</div>}
             <ReportDoc
               innerRef={reportRef}
-              siteName={siteName} rows={rows} stats={stats} rate={rate} reportDate={reportDate}
+              siteName={clientName.trim() || siteName} rows={rows} stats={stats} rate={rate} reportDate={reportDate}
+              solarManual={solarManual} battManual={battManual} reportNote={reportNote}
               showMax={showMax} showMin={showMin} showAvg={showAvg}
               solarShow={solarShow} solarRec={solarRec}
               battShow={battShow} battRec={battRec} battCustom={battCustom}
@@ -734,6 +799,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
 // ── เอกสารรายงาน (โทนสว่าง กว้างคงที่ 900px เพื่อให้ PDF ออกมาคมและคาดเดาได้) ──
 function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax, showMin, showAvg,
                      solarShow, solarRec, battShow, battRec, battCustom,
+                     solarManual, battManual, reportNote,
                      showPaySolar, paybackSolar, showPayBatt, paybackBatt,
                      images, sunIntensity }) {
   const sectionTitle = {
@@ -761,6 +827,15 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
     if (solarShow.min) solarCards.push({ key: 'min', title: `วันที่ใช้ไฟฟ้าน้อยสุด (${thShort(stats.minRow.date)})`, dayLabel: 'ใช้ไฟกลางวัน', ...stats.minRow })
     if (solarShow.avg) solarCards.push({ key: 'avg', title: 'ค่าเฉลี่ย', dayLabel: 'ใช้ไฟกลางวันเฉลี่ย', ...stats.avg })
   }
+  // การ์ดกรอกเองไม่ต้องรอ stats — ตัวเลขมาจากช่องกรอกล้วนๆ
+  if (solarShow.manual && Number(solarManual?.kw) > 0) {
+    const day = Number(solarManual.day) || 0
+    solarCards.push({
+      key: 'manual', title: solarManual.label || 'กรอกเอง', dayLabel: 'ใช้ไฟกลางวัน',
+      day, solarKw: Number(solarManual.kw) || 0,
+      savingsDay: day * rate, savingsYear: day * rate * 365,
+    })
+  }
 
   const battCards = []
   if (stats) {
@@ -779,6 +854,11 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
       energy: stats.avg.battCustom, kwh: stats.avg.battCustom / BATTERY_DOD, note: null,
     })
   }
+  // การ์ดกรอกเองไม่ต้องรอ stats — ตัวเลขมาจากช่องกรอกล้วนๆ
+  if (battShow.manual && Number(battManual?.kwh) > 0) battCards.push({
+    key: 'manual', label: battManual.label || 'กรอกเอง', sub: 'พลังงานที่ต้องสำรอง',
+    energy: Number(battManual.energy) || 0, kwh: Number(battManual.kwh) || 0, note: null,
+  })
 
   return (
     <div ref={innerRef} style={{ width: 900, background: '#fff', padding: 40, color: R.text, fontFamily: '"Sarabun",sans-serif', fontSize: 14, lineHeight: 1.5, boxSizing: 'border-box' }}>
@@ -958,6 +1038,13 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
           </div>
         </div>
       </>}
+
+      {/* Section 6 — หมายเหตุที่พิมพ์เอง */}
+      {reportNote?.trim() && <>
+        <hr style={divider} data-break />
+        <div style={sectionTitle}><span style={bar} />หมายเหตุ</div>
+        <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.8, color: R.text }}>{reportNote.trim()}</div>
+      </>}
     </div>
   )
 }
@@ -980,45 +1067,51 @@ function LegendRow({ color, children }) {
   )
 }
 
-// ── ตารางจุดคุ้มทุน — เลย์เอาต์/สีตามไฟล์ Excel ที่ใช้เสนอลูกค้าอยู่แล้ว ──────
-const PAY_HEAD    = '#ed7d31'
-const PAY_INVEST  = '#92d050'
-const PAY_PAYBACK = '#ffff00'
-const PAY_LINE    = '#4a4a4a'
+// ── ตารางจุดคุ้มทุน ───────────────────────────────────────────────────────────
+// เดิมลอกสี Excel มาตรงๆ (ส้ม/เขียวนีออน/เหลืองล้วน + เส้นดำ) ตัดกับส่วนอื่นของรายงาน
+// ตอนนี้ใช้โทนเดียวกับทั้งเอกสาร: หัวเขียวเข้ม เส้นบาง แถวสลับสีอ่อน แถวสรุปเป็นพื้นพาสเทล
+const PAY_HEAD    = R.darkGreen      // #116149
+const PAY_LINE    = '#e8ecef'
+const PAY_ZEBRA   = '#fafbfc'
+const PAY_INVEST  = '#eaf6ef'
+const PAY_PAYBACK = '#fff5e6'
+const PAY_AMBER   = '#a15c00'
 
 function PaybackTable({ title, rows, invest, years, note }) {
-  const cell  = { border: `1px solid ${PAY_LINE}`, padding: '9px 14px' }
-  const num   = { ...cell, textAlign: 'center', fontWeight: 700, width: '22%' }
-  const unitC = { ...cell, textAlign: 'center', width: '20%' }
+  const cell  = { padding: '10px 16px', borderBottom: `1px solid ${PAY_LINE}` }
+  const num   = { ...cell, textAlign: 'right', fontWeight: 700, width: '22%', fontVariantNumeric: 'tabular-nums' }
+  const unitC = { ...cell, textAlign: 'left', width: '22%', fontSize: 13 }
 
-  const Row = ({ label, value, unit, bg, color, bold }) => (
-    <tr style={bg ? { background: bg } : undefined}>
+  const Row = ({ label, value, unit, bg, color, bold, zebra }) => (
+    <tr style={{ background: bg || (zebra ? PAY_ZEBRA : '#fff') }}>
       <td style={{ ...cell, fontWeight: bold ? 700 : 400 }}>{label}</td>
       <td style={{ ...num, color: color || R.text }}>{value}</td>
-      <td style={{ ...unitC, color: color || R.muted }}>{unit}</td>
+      <td style={{ ...unitC, color: color ? color : R.muted, opacity: color ? 0.85 : 1 }}>{unit}</td>
     </tr>
   )
 
   return (
     <>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-        <thead>
-          <tr>
-            <th colSpan={3} style={{ border: `1px solid ${PAY_LINE}`, background: PAY_HEAD, color: '#fff', fontWeight: 700, padding: '10px 12px' }}>
-              {title}
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => <Row key={i} {...r} />)}
-          <tr><td colSpan={3} style={{ height: 10, border: 'none' }} /></tr>
-          <Row label="เงินลงทุน" value={nL(invest)} unit="บาท" bg={PAY_INVEST} bold />
-          {/* วันที่ไม่มีข้อมูล → ประหยัดได้ ~0 แล้วคืนทุนจะเป็นเลขหลักล้านปี ตัดเป็น "> 100" แทน */}
-          <Row label="ระยะเวลาคืนทุน"
-               value={years === null ? '--' : years > 100 ? '> 100' : n2(years)}
-               unit="ปี" bg={PAY_PAYBACK} color={R.red} bold />
-        </tbody>
-      </table>
+      {/* borderRadius ต้องอยู่บน wrapper + overflow hidden — html2canvas ไม่ตัดมุมให้ที่ <table> */}
+      <div style={{ border: `1px solid ${PAY_LINE}`, borderRadius: 10, overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+          <thead>
+            <tr>
+              <th colSpan={3} style={{ background: PAY_HEAD, color: '#fff', fontWeight: 600, padding: '12px 16px', textAlign: 'left', letterSpacing: 0.2 }}>
+                {title}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => <Row key={i} {...r} zebra={i % 2 === 1} />)}
+            <Row label="เงินลงทุน" value={nL(invest)} unit="บาท" bg={PAY_INVEST} color={R.darkGreen} bold />
+            {/* วันที่ไม่มีข้อมูล → ประหยัดได้ ~0 แล้วคืนทุนจะเป็นเลขหลักล้านปี ตัดเป็น "> 100" แทน */}
+            <Row label="ระยะเวลาคืนทุน"
+                 value={years === null ? '--' : years > 100 ? '> 100' : n2(years)}
+                 unit="ปี" bg={PAY_PAYBACK} color={PAY_AMBER} bold />
+          </tbody>
+        </table>
+      </div>
       {note && <div style={{ fontSize: 12, color: R.muted, marginTop: 8 }}>* {note}</div>}
     </>
   )
