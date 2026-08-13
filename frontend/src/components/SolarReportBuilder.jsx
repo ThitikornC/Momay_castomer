@@ -193,8 +193,8 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
   const [battRec,   setBattRec]     = useState('evening')
 
   // การ์ดที่กรอกตัวเลขเอง — ไว้เสนอขนาดที่ลูกค้าอยากได้ ไม่ต้องอิงสูงสุด/ต่ำสุด/เฉลี่ย
-  const [solarManual, setSolarManual] = useState({ label: 'ตามที่ลูกค้าต้องการ', day: '', kw: '' })
-  const [battManual,  setBattManual]  = useState({ label: 'ตามที่ลูกค้าต้องการ', energy: '', kwh: '' })
+  const [solarManual, setSolarManual] = useState({ label: 'ตามที่ลูกค้าต้องการ', day: '', kw: '', note: '' })
+  const [battManual,  setBattManual]  = useState({ label: 'ตามที่ลูกค้าต้องการ', energy: '', kwh: '', note: '' })
   const [battCustom, setBattCustom] = useState({ start: '20:00', end: '04:00' })
   const [rawCache, setRawCache]     = useState({})   // date -> { mins, power, cov } จากข้อมูลดิบ
 
@@ -608,6 +608,10 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
                          onChange={e => setSolarManual(s => ({ ...s, kw: e.target.value }))}
                          style={{ ...field, padding: '5px 8px', fontSize: 12, flex: 1 }} />
                 </div>
+                <textarea value={solarManual.note} rows={2}
+                          placeholder="หมายเหตุบนการ์ด (เคสพิเศษ) — เว้นว่างได้"
+                          onChange={e => setSolarManual(s => ({ ...s, note: e.target.value }))}
+                          style={{ ...field, padding: '5px 8px', fontSize: 12, resize: 'vertical', lineHeight: 1.5 }} />
                 <div style={{ fontSize: 10, color: '#777' }}>ประหยัด/วัน–ปี คำนวณจากหน่วยที่กรอก × อัตราค่าไฟ</div>
               </div>
             )}
@@ -638,6 +642,10 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
                          onChange={e => setBattManual(s => ({ ...s, kwh: e.target.value }))}
                          style={{ ...field, padding: '5px 8px', fontSize: 12, flex: 1 }} />
                 </div>
+                <textarea value={battManual.note} rows={2}
+                          placeholder="หมายเหตุบนการ์ด (เคสพิเศษ) — เว้นว่างได้"
+                          onChange={e => setBattManual(s => ({ ...s, note: e.target.value }))}
+                          style={{ ...field, padding: '5px 8px', fontSize: 12, resize: 'vertical', lineHeight: 1.5 }} />
               </div>
             )}
             {battShow.custom && (
@@ -833,6 +841,7 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
       key: 'manual', title: solarManual.label || 'กรอกเอง', dayLabel: 'ใช้ไฟกลางวัน',
       day, solarKw: Number(solarManual.kw) || 0,
       savingsDay: day * rate, savingsYear: day * rate * 365,
+      note: solarManual.note?.trim() || null,
     })
   }
 
@@ -856,7 +865,8 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
   // การ์ดกรอกเองไม่ต้องรอ stats — ตัวเลขมาจากช่องกรอกล้วนๆ
   if (battShow.manual && Number(battManual?.kwh) > 0) battCards.push({
     key: 'manual', label: battManual.label || 'กรอกเอง', sub: 'พลังงานที่ต้องสำรอง',
-    energy: Number(battManual.energy) || 0, kwh: Number(battManual.kwh) || 0, note: null,
+    energy: Number(battManual.energy) || 0, kwh: Number(battManual.kwh) || 0,
+    note: battManual.note?.trim() || null,
   })
 
   return (
@@ -949,6 +959,7 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
             <Card key={c.key} recommended={solarRec === c.key} title={c.title}
                   subs={[`${c.dayLabel} ${n2(c.day)} Unit`, 'กำลังการติดตั้งแผงโซลาร์ที่เหมาะสม']}
                   value={`${n2(c.solarKw)} kW`}
+                  note={c.note}
                   perDay={c.savingsDay} perYear={c.savingsYear} />
           ))}
         </div>
@@ -1344,7 +1355,8 @@ function Card({ recommended, title, subs, value, note, perDay, perYear }) {
         <div style={{ fontSize: 13, color: R.muted, marginBottom: 4 }}>{title}</div>
         {subs.map((s, i) => <div key={i} style={{ fontSize: 12, fontWeight: 600, marginTop: 2 }}>{s}</div>)}
         <div style={{ fontSize: 26, fontWeight: 700, marginTop: 6, lineHeight: 1.2, color: recommended ? R.red : R.text }}>{value}</div>
-        {note && <div style={{ fontSize: 12, color: R.red, lineHeight: 1.4, marginTop: 12 }}>{note}</div>}
+        {/* pre-wrap เพราะหมายเหตุที่พิมพ์เองขึ้นบรรทัดใหม่ได้ */}
+        {note && <div style={{ fontSize: 12, color: R.red, lineHeight: 1.4, marginTop: 12, whiteSpace: 'pre-wrap' }}>{note}</div>}
       </div>
       <hr style={{ border: 'none', borderTop: '1px solid #f0f0f0', margin: '16px 0' }} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 8, alignItems: 'center' }}>
