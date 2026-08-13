@@ -979,10 +979,7 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
                   perDay={c.energy * rate} perYear={c.energy * rate * 365} />
           ))}
         </div>
-        <div style={notice}>
-          <strong>หมายเหตุ:</strong> คำนวณจากการใช้ไฟจริง {rows.length} วัน · อัตรา {n2(rate)} บาท/Unit ·
-          นับเฉพาะไฟที่ใช้จริง ไม่รวมช่วงที่ไฟไหลย้อน
-        </div>
+        <div style={notice}>{noticeText}</div>
       </>}
 
       {/* Section 4 — จุดคุ้มทุน (โซล่าเซลล์ / แบตเตอรี่ แยกตาราง เงินลงทุนคนละก้อน) */}
