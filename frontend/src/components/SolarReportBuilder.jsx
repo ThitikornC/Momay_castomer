@@ -12,7 +12,7 @@ const AMBER_BORDER = '1.5px solid rgba(255,184,0,0.4)'
 const R = {
   red: '#d93025', lightRed: '#fcdbdc', teal: '#00897b', tealHi: '#aee2d9',
   greenBar: '#0f8a5f', lightGreen: '#9ae2c3', darkGreen: '#116149',
-  text: '#202124', muted: '#5f6368', border: '#e0e0e0',
+  text: '#202124', muted: '#5f6368', border: '#e0e0e0', line: '#aeb6bd',
 }
 
 const TH_MONTH_SHORT = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.']
@@ -193,8 +193,8 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
   const [battRec,   setBattRec]     = useState('evening')
 
   // การ์ดที่กรอกตัวเลขเอง — ไว้เสนอขนาดที่ลูกค้าอยากได้ ไม่ต้องอิงสูงสุด/ต่ำสุด/เฉลี่ย
-  const [solarManual, setSolarManual] = useState({ label: 'ตามที่ลูกค้าต้องการ', day: '', kw: '', note: '' })
-  const [battManual,  setBattManual]  = useState({ label: 'ตามที่ลูกค้าต้องการ', energy: '', kwh: '', note: '' })
+  const [solarManual, setSolarManual] = useState({ label: 'ตามที่ลูกค้าต้องการ', kw: '', note: '' })
+  const [battManual,  setBattManual]  = useState({ label: 'ตามที่ลูกค้าต้องการ', kwh: '', note: '' })
   const [battCustom, setBattCustom] = useState({ start: '20:00', end: '04:00' })
   const [rawCache, setRawCache]     = useState({})   // date -> { mins, power, cov } จากข้อมูลดิบ
 
@@ -600,19 +600,18 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
                 <input type="text" value={solarManual.label} placeholder="ชื่อการ์ด"
                        onChange={e => setSolarManual(s => ({ ...s, label: e.target.value }))}
                        style={{ ...field, padding: '5px 8px', fontSize: 12 }} />
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <input type="number" step="0.01" min="0" value={solarManual.day} placeholder="ใช้ไฟกลางวัน (Unit)"
-                         onChange={e => setSolarManual(s => ({ ...s, day: e.target.value }))}
-                         style={{ ...field, padding: '5px 8px', fontSize: 12, flex: 1 }} />
-                  <input type="number" step="0.01" min="0" value={solarManual.kw} placeholder="ขนาด (kW)"
-                         onChange={e => setSolarManual(s => ({ ...s, kw: e.target.value }))}
-                         style={{ ...field, padding: '5px 8px', fontSize: 12, flex: 1 }} />
-                </div>
+                <input type="number" step="0.01" min="0" value={solarManual.kw} placeholder="ขนาดที่จะติดตั้ง (kW)"
+                       onChange={e => setSolarManual(s => ({ ...s, kw: e.target.value }))}
+                       style={{ ...field, padding: '5px 8px', fontSize: 12 }} />
                 <textarea value={solarManual.note} rows={2}
                           placeholder="หมายเหตุบนการ์ด (เคสพิเศษ) — เว้นว่างได้"
                           onChange={e => setSolarManual(s => ({ ...s, note: e.target.value }))}
                           style={{ ...field, padding: '5px 8px', fontSize: 12, resize: 'vertical', lineHeight: 1.5 }} />
-                <div style={{ fontSize: 10, color: '#777' }}>ประหยัด/วัน–ปี คำนวณจากหน่วยที่กรอก × อัตราค่าไฟ</div>
+                <div style={{ fontSize: 10, color: '#777', lineHeight: 1.5 }}>
+                  ผลิตได้ = ขนาด × ชั่วโมงแดด {n2(Number(paySun) || 0)} ชม. → ประหยัด = ผลิตได้ × {n2(rate)} บาท/Unit
+                  {Number(solarManual.kw) > 0 && ` = ${nL((Number(solarManual.kw) || 0) * (Number(paySun) || 0) * rate)} ฿/วัน`}
+                  <br />(ชั่วโมงแดดใช้ค่าเดียวกับตารางจุดคุ้มทุนด้านล่าง)
+                </div>
               </div>
             )}
             <div style={{ ...label, marginTop: 12, fontSize: 11, color: '#999' }}>เลือกอันที่จะติดป้าย “แนะนำ”</div>
@@ -634,14 +633,9 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
                 <input type="text" value={battManual.label} placeholder="ชื่อการ์ด"
                        onChange={e => setBattManual(s => ({ ...s, label: e.target.value }))}
                        style={{ ...field, padding: '5px 8px', fontSize: 12 }} />
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <input type="number" step="0.01" min="0" value={battManual.energy} placeholder="พลังงานที่สำรอง (Unit)"
-                         onChange={e => setBattManual(s => ({ ...s, energy: e.target.value }))}
-                         style={{ ...field, padding: '5px 8px', fontSize: 12, flex: 1 }} />
-                  <input type="number" step="0.01" min="0" value={battManual.kwh} placeholder="ความจุ (kWh)"
-                         onChange={e => setBattManual(s => ({ ...s, kwh: e.target.value }))}
-                         style={{ ...field, padding: '5px 8px', fontSize: 12, flex: 1 }} />
-                </div>
+                <input type="number" step="0.01" min="0" value={battManual.kwh} placeholder="ความจุที่จะติดตั้ง (kWh)"
+                       onChange={e => setBattManual(s => ({ ...s, kwh: e.target.value }))}
+                       style={{ ...field, padding: '5px 8px', fontSize: 12 }} />
                 <textarea value={battManual.note} rows={2}
                           placeholder="หมายเหตุบนการ์ด (เคสพิเศษ) — เว้นว่างได้"
                           onChange={e => setBattManual(s => ({ ...s, note: e.target.value }))}
@@ -784,6 +778,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
               innerRef={reportRef}
               siteName={clientName.trim() || siteName} rows={rows} stats={stats} rate={rate} reportDate={reportDate}
               solarManual={solarManual} battManual={battManual} reportNote={reportNote}
+              sunHours={Number(paySun) || 0} battDod={Number(payBattDod) || 0}
               showMax={showMax} showMin={showMin} showAvg={showAvg}
               solarShow={solarShow} solarRec={solarRec}
               battShow={battShow} battRec={battRec} battCustom={battCustom}
@@ -806,7 +801,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
 // ── เอกสารรายงาน (โทนสว่าง กว้างคงที่ 900px เพื่อให้ PDF ออกมาคมและคาดเดาได้) ──
 function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax, showMin, showAvg,
                      solarShow, solarRec, battShow, battRec, battCustom,
-                     solarManual, battManual, reportNote,
+                     solarManual, battManual, reportNote, sunHours, battDod,
                      showPaySolar, paybackSolar, showPayBatt, paybackBatt,
                      images, sunIntensity }) {
   const sectionTitle = {
@@ -814,8 +809,8 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
     display: 'flex', alignItems: 'center', gap: 8,
   }
   const bar = { display: 'inline-block', width: 4, height: 18, background: R.greenBar, borderRadius: 2, flexShrink: 0 }
-  const th  = { padding: '10px 12px', border: '1px solid #efefef', background: '#fff', color: R.muted, fontWeight: 500 }
-  const td  = { padding: '10px 12px', border: '1px solid #efefef' }
+  const th  = { padding: '10px 12px', border: `1px solid ${R.line}`, background: '#fff', color: R.muted, fontWeight: 500 }
+  const td  = { padding: '10px 12px', border: `1px solid ${R.line}` }
   const divider = { border: 'none', borderTop: `1px solid ${R.border}`, margin: '26px 0 30px' }
   const notice = { background: '#e8f5e9', color: R.teal, padding: '12px 16px', borderRadius: 6, fontSize: 13, marginTop: 24, borderLeft: `4px solid ${R.teal}` }
 
@@ -836,11 +831,14 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
   }
   // การ์ดกรอกเองไม่ต้องรอ stats — ตัวเลขมาจากช่องกรอกล้วนๆ
   if (solarShow.manual && Number(solarManual?.kw) > 0) {
-    const day = Number(solarManual.day) || 0
+    // การ์ดใบนี้เริ่มจาก "ขนาดที่จะติดตั้ง" → ผลิตได้ = ขนาด × ชั่วโมงแดด → ประหยัด = ผลิตได้ × ค่าไฟ
+    // (ใบอื่นเดินย้อนทาง: ใช้ไฟกลางวันจริง → ขนาดที่เหมาะสม) สูตรจึงต่างกัน แต่ได้ตัวเลขชุดเดียวกัน
+    const kw   = Number(solarManual.kw) || 0
+    const prod = kw * sunHours
     solarCards.push({
-      key: 'manual', title: solarManual.label || 'กรอกเอง', dayLabel: 'ใช้ไฟกลางวัน',
-      day, solarKw: Number(solarManual.kw) || 0,
-      savingsDay: day * rate, savingsYear: day * rate * 365,
+      key: 'manual', title: solarManual.label || 'กรอกเอง', dayLabel: 'ผลิตไฟได้',
+      day: prod, solarKw: kw,
+      savingsDay: prod * rate, savingsYear: prod * rate * 365,
       note: solarManual.note?.trim() || null,
     })
   }
@@ -863,11 +861,15 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
     })
   }
   // การ์ดกรอกเองไม่ต้องรอ stats — ตัวเลขมาจากช่องกรอกล้วนๆ
-  if (battShow.manual && Number(battManual?.kwh) > 0) battCards.push({
-    key: 'manual', label: battManual.label || 'กรอกเอง', sub: 'พลังงานที่ต้องสำรอง',
-    energy: Number(battManual.energy) || 0, kwh: Number(battManual.kwh) || 0,
-    note: battManual.note?.trim() || null,
-  })
+  // แบตก็เดินทางเดียวกัน: ความจุที่จะติดตั้ง → ใช้ได้จริง = ความจุ × DoD → ประหยัด = ใช้ได้จริง × ค่าไฟ
+  if (battShow.manual && Number(battManual?.kwh) > 0) {
+    const kwh = Number(battManual.kwh) || 0
+    battCards.push({
+      key: 'manual', label: battManual.label || 'กรอกเอง', sub: `ใช้ได้จริงต่อรอบ (DoD ${n2(battDod)}%)`,
+      energy: kwh * (battDod / 100), kwh,
+      note: battManual.note?.trim() || null,
+    })
+  }
 
   return (
     <div ref={innerRef} style={{ width: 900, background: '#fff', padding: 40, color: R.text, fontFamily: '"Sarabun",sans-serif', fontSize: 14, lineHeight: 1.5, boxSizing: 'border-box' }}>
@@ -894,8 +896,8 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
         <thead>
           <tr>
             <th rowSpan={2} style={{ ...th, verticalAlign: 'bottom', width: '15%' }}>วันที่</th>
-            <th colSpan={3} style={{ ...th, borderBottom: `1px solid ${R.border}` }}>การใช้ไฟฟ้าจริง</th>
-            <th colSpan={3} style={{ ...th, borderBottom: `1px solid ${R.border}` }}>การคำนวณโซลาร์เซลล์</th>
+            <th colSpan={3} style={{ ...th, borderBottom: `1px solid ${R.line}` }}>การใช้ไฟฟ้าจริง</th>
+            <th colSpan={3} style={{ ...th, borderBottom: `1px solid ${R.line}` }}>การคำนวณโซลาร์เซลล์</th>
           </tr>
           <tr>
             <th style={th}>24 ชม.</th>
@@ -978,10 +980,7 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
                   perDay={c.energy * rate} perYear={c.energy * rate * 365} />
           ))}
         </div>
-        <div style={notice}>
-          <strong>หมายเหตุ:</strong> คำนวณจากการใช้ไฟจริง {rows.length} วัน · อัตรา {n2(rate)} บาท/Unit ·
-          นับเฉพาะไฟที่ใช้จริง ไม่รวมช่วงที่ไฟไหลย้อน
-        </div>
+        <div style={notice}>{noticeText}</div>
       </>}
 
       {/* Section 4 — จุดคุ้มทุน (โซล่าเซลล์ / แบตเตอรี่ แยกตาราง เงินลงทุนคนละก้อน) */}
@@ -1081,7 +1080,7 @@ function LegendRow({ color, children }) {
 // เดิมลอกสี Excel มาตรงๆ (ส้ม/เขียวนีออน/เหลืองล้วน + เส้นดำ) ตัดกับส่วนอื่นของรายงาน
 // ตอนนี้ใช้โทนเดียวกับทั้งเอกสาร: หัวเขียวเข้ม เส้นบาง แถวสลับสีอ่อน แถวสรุปเป็นพื้นพาสเทล
 const PAY_HEAD    = R.darkGreen      // #116149
-const PAY_LINE    = '#e8ecef'
+const PAY_LINE    = R.line
 const PAY_ZEBRA   = '#fafbfc'
 const PAY_INVEST  = '#eaf6ef'
 const PAY_PAYBACK = '#fff5e6'
