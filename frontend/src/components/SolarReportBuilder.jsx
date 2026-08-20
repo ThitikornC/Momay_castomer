@@ -30,6 +30,11 @@ const nL = v => (v === null || v === undefined || Number.isNaN(v)) ? '--'
 // แบตเตอรี่ใช้งานได้จริงแค่ ~80% ของความจุ (Depth of Discharge) → ต้องซื้อความจุมากกว่าพลังงานที่ใช้
 const BATTERY_DOD = 0.8
 
+// ค่าไฟรายเดือน/รายปีในตารางสรุป ประมาณจากการใช้ไฟของวันนั้นวันเดียว
+// คิดเดือนละ 30 วัน ปีละ 12 เดือน (ฐานเดียวกับตารางจุดคุ้มทุน) → รายเดือน × 12 = รายปี เสมอ
+const BILL_DAYS_PER_MONTH  = 30
+const BILL_MONTHS_PER_YEAR = 12
+
 // ซ่อนข้อมูลก่อนวันติดตั้ง เหมือนหน้าอื่นในแอป (ดู DATA_MIN_DATE ใน MomayRelationshipLayer)
 const DATA_MIN_DATE = (import.meta.env.VITE_DATA_MIN_DATE || '').trim()
 
@@ -817,6 +822,17 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
 
   const noticeText = <><strong>หมายเหตุ:</strong> คำนวณจากการใช้ไฟจริง {rows.length} วัน · อัตรา {n2(rate)} บาท/Unit</>
 
+  // ค่าไฟของแต่ละวัน แล้วขยายเป็นรายเดือน/รายปีจากวันนั้น (ไม่ใช่ยอดสะสมจริง)
+  const bill = kwh => {
+    const day   = (kwh || 0) * rate
+    const month = day * BILL_DAYS_PER_MONTH
+    return { day, month, year: month * BILL_MONTHS_PER_YEAR }
+  }
+  // คอลัมน์รายเดือนคือตัวเลขที่ลูกค้าดูจริง → เน้นด้วยพื้นเขียวอ่อน + ตัวหนา
+  // แถวสูงสุด/ต่ำสุด/ค่าเฉลี่ยมีสีพื้นของตัวเองอยู่แล้ว ทับไปจะอ่านไม่ออก เหลือแค่ตัวหนา
+  const billHiHead = { background: '#e8f5e9', color: R.darkGreen, fontWeight: 700 }
+  const billHiCell = tinted => tinted ? { fontWeight: 700 } : { background: '#e8f5e9', color: R.darkGreen, fontWeight: 700 }
+
   const maxDate = stats?.maxRow?.date
   const minDate = stats?.minRow?.date
 
@@ -898,15 +914,15 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
           <tr>
             <th rowSpan={2} style={{ ...th, verticalAlign: 'bottom', width: '15%' }}>วันที่</th>
             <th colSpan={3} style={{ ...th, borderBottom: `1px solid ${R.line}` }}>การใช้ไฟฟ้าจริง</th>
-            <th colSpan={3} style={{ ...th, borderBottom: `1px solid ${R.line}` }}>การคำนวณโซลาร์เซลล์</th>
+            <th colSpan={3} style={{ ...th, borderBottom: `1px solid ${R.line}` }}>ค่าไฟฟ้าโดยประมาณ<span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}> (THB)</span></th>
           </tr>
           <tr>
             <th style={th}>24 ชม.</th>
             <th style={th}>กลางวัน<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>06:00–18:00</span></th>
             <th style={th}>กลางคืน<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>18:00–06:00</span></th>
-            <th style={th}>แนะนำการติดตั้ง</th>
-            <th style={th}>ประหยัด/วัน<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>(THB)</span></th>
-            <th style={th}>ประหยัด/ปี<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>(THB)</span></th>
+            <th style={th}>รายวัน<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>วันนั้น</span></th>
+            <th style={{ ...th, ...billHiHead }}>รายเดือน<br /><span style={{ fontSize: 12, color: R.darkGreen, fontWeight: 400 }}>× {BILL_DAYS_PER_MONTH} วัน</span></th>
+            <th style={th}>รายปี<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>× {BILL_MONTHS_PER_YEAR} เดือน</span></th>
           </tr>
         </thead>
         <tbody>
@@ -916,29 +932,32 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
             const rowStyle = isMax ? { background: R.lightRed, color: R.red, fontWeight: 600 }
                            : isMin ? { background: R.tealHi, color: R.teal, fontWeight: 600 }
                            : {}
+            const b = bill(r.total)
             return (
               <tr key={r.date} style={rowStyle}>
                 <td style={td}>{thShort(r.date)}</td>
                 <td style={td}>{n2(r.total)}</td>
                 <td style={td}>{n2(r.day)}</td>
                 <td style={td}>{n2(r.night)}</td>
-                <td style={td}>{n2(r.solarKw)} kW</td>
-                <td style={td}>{nL(r.savingsDay)}</td>
-                <td style={td}>{nL(r.savingsYear)}</td>
+                <td style={td}>{nL(b.day)}</td>
+                <td style={{ ...td, ...billHiCell(isMax || isMin) }}>{nL(b.month)}</td>
+                <td style={td}>{nL(b.year)}</td>
               </tr>
             )
           })}
           {showAvg && stats && (() => {
             // html2canvas ไม่ render outline บน <tr> → ต้องตีกรอบที่ td แต่ละช่องแทน
+            const avgBill = bill(stats.avg.total)
             const cells = [
               'ค่าเฉลี่ย', n2(stats.avg.total), n2(stats.avg.day), n2(stats.avg.night),
-              `${n2(stats.avg.solarKw)} kW`, nL(stats.avg.savingsDay), nL(stats.avg.savingsYear),
+              nL(avgBill.day), nL(avgBill.month), nL(avgBill.year),
             ]
             return (
               <tr style={{ color: R.red, fontWeight: 600 }}>
                 {cells.map((v, i) => (
                   <td key={i} style={{
                     ...td,
+                    ...(i === 5 ? billHiCell(true) : null),
                     borderTop: `2px solid ${R.red}`, borderBottom: `2px solid ${R.red}`,
                     borderLeft: i === 0 ? `2px solid ${R.red}` : td.border,
                     borderRight: i === cells.length - 1 ? `2px solid ${R.red}` : td.border,
