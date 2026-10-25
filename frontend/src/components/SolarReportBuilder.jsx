@@ -595,7 +595,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
             <Check on={showMax} set={setShowMax}>แสดงแถว “สูงสุด”</Check>
             <Check on={showMin} set={setShowMin}>แสดงแถว “ต่ำสุด”</Check>
             <Check on={showAvg} set={setShowAvg}>แสดงแถว “ค่าเฉลี่ย”</Check>
-            <Check on={showChart} set={setShowChart}>แสดงกราฟวันที่ใช้ไฟสูงสุด + ช่วง peak</Check>
+            <Check on={showChart} set={setShowChart}>แสดงกราฟวันที่ใช้ไฟสูงสุด</Check>
           </div>
 
           <div style={group}>
@@ -1083,12 +1083,9 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
   )
 }
 
-// กราฟกำลังไฟรายนาทีของวันที่ใช้ไฟสูงสุด + สรุปช่วง peak — ขนาดคงที่ (ไม่ responsive) เพราะพรีวิวถูก scale
+// กราฟกำลังไฟรายนาทีของวันที่ใช้ไฟสูงสุด + จุด peak — ขนาดคงที่ (ไม่ responsive) เพราะพรีวิวถูก scale
 // ด้วย transform และ html2canvas ต้องได้ภาพที่วาดเสร็จแล้ว → ปิด animation
 const CHART_LINE = '#f5a623'
-// ช่วง On-Peak ตามอัตรา TOU ของการไฟฟ้า (จันทร์–ศุกร์ 09:00–22:00)
-const ON_PEAK_START = 9
-const ON_PEAK_END   = 22
 
 const minLabel = i => `${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}`
 
@@ -1097,14 +1094,9 @@ function PeakDayChart({ row }) {
   const instRef   = useRef(null)
   const power = row.power
 
-  // จุดกำลังไฟสูงสุด (ต้องมีข้อมูลรายนาที) และชั่วโมงที่ใช้ Unit มากที่สุด (มาจาก /solar-size เสมอ)
+  // จุดกำลังไฟสูงสุด (ต้องมีข้อมูลรายนาที)
   let peakIdx = -1
   if (power) power.forEach((p, i) => { if (p !== null && (peakIdx < 0 || p > power[peakIdx])) peakIdx = i })
-  const hours   = row.hours || []
-  const peakHr  = hours.length ? hours.indexOf(Math.max(...hours)) : -1
-  const onPeak  = sumWindow(hours, ON_PEAK_START, ON_PEAK_END)
-  const offPeak = sumWindow(hours, ON_PEAK_END, ON_PEAK_START)
-  const pct     = v => row.total > 0 ? ` (${(v / row.total * 100).toFixed(0)}%)` : ''
 
   useEffect(() => {
     if (!power) return
@@ -1147,7 +1139,7 @@ function PeakDayChart({ row }) {
     return () => { alive = false; instRef.current?.destroy(); instRef.current = null }
   }, [power, peakIdx])
 
-  const tile = { flex: 1, border: `1px solid ${R.border}`, borderRadius: 10, padding: '10px 14px', minWidth: 0 }
+  const tile = { width: 260, border: `1px solid ${R.border}`, borderRadius: 10, padding: '10px 14px', minWidth: 0 }
   const tTitle = { fontSize: 12, color: R.muted }
   const tVal   = { fontSize: 18, fontWeight: 700, color: R.text }
   const tSub   = { fontSize: 12, color: R.muted }
@@ -1163,21 +1155,6 @@ function PeakDayChart({ row }) {
           <div style={tTitle}>กำลังไฟสูงสุด (Peak)</div>
           <div style={{ ...tVal, color: R.red }}>{peakIdx >= 0 ? `${n2(power[peakIdx])} kW` : '--'}</div>
           <div style={tSub}>{peakIdx >= 0 ? `เวลา ${minLabel(peakIdx)} น.` : 'กำลังโหลดข้อมูล…'}</div>
-        </div>
-        <div style={tile}>
-          <div style={tTitle}>ชั่วโมงที่ใช้ไฟมากที่สุด</div>
-          <div style={tVal}>{peakHr >= 0 ? `${n2(hours[peakHr])} Unit` : '--'}</div>
-          <div style={tSub}>{peakHr >= 0 ? `${hhmm(peakHr)}–${hhmm((peakHr + 1) % 24)} น.` : ''}</div>
-        </div>
-        <div style={tile}>
-          <div style={tTitle}>ช่วง On-Peak</div>
-          <div style={tVal}>{n2(onPeak)} Unit</div>
-          <div style={tSub}>{hhmm(ON_PEAK_START)}–{hhmm(ON_PEAK_END)} น.{pct(onPeak)}</div>
-        </div>
-        <div style={tile}>
-          <div style={tTitle}>ช่วง Off-Peak</div>
-          <div style={tVal}>{n2(offPeak)} Unit</div>
-          <div style={tSub}>{hhmm(ON_PEAK_END)}–{hhmm(ON_PEAK_START)} น.{pct(offPeak)}</div>
         </div>
       </div>
 
