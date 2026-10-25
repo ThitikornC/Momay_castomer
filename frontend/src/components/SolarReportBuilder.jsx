@@ -191,7 +191,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
 
   const [showMax, setShowMax] = useState(true)
   const [showMin, setShowMin] = useState(false)
-  const [showAvg, setShowAvg] = useState(false)
+  const [showAvg, setShowAvg] = useState(true)
   const [showChart, setShowChart] = useState(true)
 
   const [solarShow, setSolarShow]   = useState({ max: true, min: true, avg: true, manual: false })

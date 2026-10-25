@@ -1195,7 +1195,7 @@ function MomaySolarPopup({ open, onClose, room }) {
               ? hourly.map((h, i) => (
                   <tr key={i} style={{ background: i%2===0 ? '#fffef8' : '#f5f0e5' }}>
                     <td style={{ padding:'3px 8px', textAlign:'center' }}>{h.hour}</td>
-                    <td style={{ padding:'3px 8px', textAlign:'center' }}>{h.energy_kwh}</td>
+                    <td style={{ padding:'3px 8px', textAlign:'center' }}>{fmt2(h.energy_kwh)}</td>
                   </tr>
                 ))
               : <tr><td colSpan={2} style={{ textAlign:'center', padding:8 }}>No data</td></tr>
