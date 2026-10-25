@@ -917,9 +917,9 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
             <th colSpan={3} style={{ ...th, borderBottom: `1px solid ${R.line}` }}>ค่าไฟฟ้าโดยประมาณ<span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}> (บาท)</span></th>
           </tr>
           <tr>
-            <th style={th}>24 ชม.</th>
-            <th style={th}>กลางวัน<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>06:00–18:00</span></th>
-            <th style={th}>กลางคืน<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>18:00–06:00</span></th>
+            <th style={th}>หน่วย 24 ชม.</th>
+            <th style={th}>หน่วยกลางวัน<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>06:00–18:00</span></th>
+            <th style={th}>หน่วยกลางคืน<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>18:00–06:00</span></th>
             <th style={th}>รายวัน</th>
             <th style={{ ...th, ...billHiHead }}>รายเดือน<br /><span style={{ fontSize: 12, color: R.darkGreen, fontWeight: 400 }}>× {BILL_DAYS_PER_MONTH} วัน</span></th>
             <th style={th}>รายปี<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>× {BILL_MONTHS_PER_YEAR} เดือน</span></th>
@@ -1380,8 +1380,8 @@ function Card({ recommended, title, subs, value, note, perDay, perYear }) {
       <hr style={{ border: 'none', borderTop: '1px solid #f0f0f0', margin: '16px 0' }} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 8, alignItems: 'center' }}>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <span style={{ fontSize: 11, color: R.muted, marginBottom: 2 }}>ประหยัด/วัน</span>
-          <span style={{ fontSize: 14, fontWeight: 700 }}>{nL(perDay)} ฿</span>
+          <span style={{ fontSize: 11, color: R.muted, marginBottom: 2 }}>ประหยัด/เดือน</span>
+          <span style={{ fontSize: 14, fontWeight: 700 }}>{nL(perDay * BILL_DAYS_PER_MONTH)} ฿</span>
         </div>
         <div style={{ background: R.lightGreen, color: R.darkGreen, padding: '6px 10px', borderRadius: 8 }}>
           <div style={{ fontSize: 11, opacity: 0.95 }}>ประหยัด/ปี</div>
