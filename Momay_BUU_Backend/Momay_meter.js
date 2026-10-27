@@ -1021,12 +1021,13 @@ app.get('/solar-size', async (req, res) => {
             peak_power: Number(hourlyPeak[h].toFixed(2))
         }));
 
+        // กลางวัน 06:00–18:00 = ชั่วโมง 06..17 (ถัง "18:00" คือ 18:00–19:00 เป็นกลางคืน)
         const dayEnergy = hourlyArray
-            .slice(6, 19)
+            .slice(6, 18)
             .reduce((sum,o) => sum + o.energy_kwh, 0);
 
         const nightEnergy = hourlyArray
-            .filter((_,h) => h < 6 || h > 18)
+            .filter((_,h) => h < 6 || h >= 18)
             .reduce((sum,o) => sum + o.energy_kwh, 0);
 
         const totalEnergyKwh = dayEnergy + nightEnergy;

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { DEFAULT_POWER_UNIT, scaleSolar, scaleEnergyRows, scaleCalendarEvents } from '../lib/meterScale.js'
 
 // ── ตัวสร้างรายงานโซล่าเซลล์ — เลือกวัน/หัวข้อเอง แล้ว Export PDF หรือแชร์ให้ลูกค้า ──
 
@@ -28,6 +29,11 @@ const nL = v => (v === null || v === undefined || Number.isNaN(v)) ? '--'
 
 // แบตเตอรี่ใช้งานได้จริงแค่ ~80% ของความจุ (Depth of Discharge) → ต้องซื้อความจุมากกว่าพลังงานที่ใช้
 const BATTERY_DOD = 0.8
+
+// ค่าไฟรายเดือน/รายปีในตารางสรุป ประมาณจากการใช้ไฟของวันนั้นวันเดียว
+// คิดเดือนละ 30 วัน ปีละ 12 เดือน (ฐานเดียวกับตารางจุดคุ้มทุน) → รายเดือน × 12 = รายปี เสมอ
+const BILL_DAYS_PER_MONTH  = 30
+const BILL_MONTHS_PER_YEAR = 12
 
 // ซ่อนข้อมูลก่อนวันติดตั้ง เหมือนหน้าอื่นในแอป (ดู DATA_MIN_DATE ใน MomayRelationshipLayer)
 const DATA_MIN_DATE = (import.meta.env.VITE_DATA_MIN_DATE || '').trim()
@@ -176,7 +182,7 @@ function todayStr() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
 
-export default function SolarReportBuilder({ open, onClose, apiBase, device, siteName, initialDate }) {
+export default function SolarReportBuilder({ open, onClose, apiBase, device, siteName, initialDate, powerUnit = DEFAULT_POWER_UNIT }) {
   const [dates, setDates]       = useState([])
   const [cache, setCache]       = useState({})      // date -> solar json | 'error'
   const [pending, setPending]   = useState([])      // วันที่กำลังโหลด
@@ -184,8 +190,9 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
   const [rate, setRate]         = useState(4.4)
 
   const [showMax, setShowMax] = useState(true)
-  const [showMin, setShowMin] = useState(true)
+  const [showMin, setShowMin] = useState(false)
   const [showAvg, setShowAvg] = useState(true)
+  const [showChart, setShowChart] = useState(true)
 
   const [solarShow, setSolarShow]   = useState({ max: true, min: true, avg: true, manual: false })
   const [solarRec,  setSolarRec]    = useState('avg')
@@ -236,7 +243,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
       const r = await fetch(`${apiBase}/solar-size?date=${ds}&ratePerKwh=${rate}`)
       const j = await r.json()
       // วันที่ไม่มีข้อมูลยังตอบ hourly เป็น 0 ทั้งวันมาด้วย → ต้องเช็ค error ไม่งั้นได้แถวศูนย์
-      setCache(c => ({ ...c, [ds]: (j && !j.error && j.hourly) ? j : 'error' }))
+      setCache(c => ({ ...c, [ds]: (j && !j.error && j.hourly) ? scaleSolar(j, powerUnit) : 'error' }))
     } catch {
       setCache(c => ({ ...c, [ds]: 'error' }))
     } finally {
@@ -259,7 +266,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
         const r = await fetch(`${apiBase}/solar-size?date=${ds}&ratePerKwh=${newRate}`)
         const j = await r.json()
         // วันที่ไม่มีข้อมูลยังตอบ hourly เป็น 0 ทั้งวันมาด้วย → ต้องเช็ค error ไม่งั้นได้แถวศูนย์
-      setCache(c => ({ ...c, [ds]: (j && !j.error && j.hourly) ? j : 'error' }))
+      setCache(c => ({ ...c, [ds]: (j && !j.error && j.hourly) ? scaleSolar(j, powerUnit) : 'error' }))
       } catch {
         setCache(c => ({ ...c, [ds]: 'error' }))
       } finally {
@@ -276,7 +283,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
     try {
       const r = await fetch(`${apiBase}/daily-energy/${device}?date=${ds}`)
       const j = await r.json()
-      const rows = j?.data || []
+      const rows = scaleEnergyRows(j?.data || [], powerUnit)
       setRawCache(c => ({
         ...c,
         [ds]: { mins: minuteEnergyFromRaw(rows), power: minutePowerFromRaw(rows), cov: coverageOf(rows, ds) },
@@ -299,13 +306,13 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
       }
     })()
     return () => { alive = false }
-  }, [open, dates, cache, apiBase, device])
+  }, [open, dates, cache, apiBase, device, powerUnit])
 
   // เปลี่ยนมิเตอร์/หน่วยกำลังไฟ → ข้อมูลดิบที่ cache ไว้ใช้ไม่ได้แล้ว
   useEffect(() => {
     setRawCache({})
     rawReqRef.current = {}
-  }, [apiBase, device])
+  }, [apiBase, device, powerUnit])
 
   function onPickImages(e) {
     const files = Array.from(e.target.files || [])
@@ -334,6 +341,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
           battNight:   sumMinutes(rawCache[ds]?.mins, 18 * 60, 6 * 60, true),
           battCustom:  sumMinutes(rawCache[ds]?.mins, toMin(battCustom.start), toMin(battCustom.end), true),
           hasRaw: !!rawCache[ds],
+          power: rawCache[ds]?.power || null,          // กำลังไฟรายนาที ไว้วาดกราฟวันสูงสุด
         }
       })
       .filter(Boolean)
@@ -544,7 +552,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
             <span style={label}>เลือกวันที่ใส่ในตาราง</span>
 
             {/* ปฏิทิน — วันไหนมีข้อมูลจะโชว์หน่วยที่ใช้ กดเลือก/เอาออกได้เลย */}
-            <MiniCalendar apiBase={apiBase} selected={dates}
+            <MiniCalendar apiBase={apiBase} powerUnit={powerUnit} selected={dates}
                           onToggle={ds => (dates.includes(ds) ? removeDate(ds) : addDate(ds))} />
 
             <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
@@ -587,6 +595,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
             <Check on={showMax} set={setShowMax}>แสดงแถว “สูงสุด”</Check>
             <Check on={showMin} set={setShowMin}>แสดงแถว “ต่ำสุด”</Check>
             <Check on={showAvg} set={setShowAvg}>แสดงแถว “ค่าเฉลี่ย”</Check>
+            <Check on={showChart} set={setShowChart}>แสดงกราฟวันที่ใช้ไฟสูงสุด</Check>
           </div>
 
           <div style={group}>
@@ -779,7 +788,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
               siteName={clientName.trim() || siteName} rows={rows} stats={stats} rate={rate} reportDate={reportDate}
               solarManual={solarManual} battManual={battManual} reportNote={reportNote}
               sunHours={Number(paySun) || 0} battDod={Number(payBattDod) || 0}
-              showMax={showMax} showMin={showMin} showAvg={showAvg}
+              showMax={showMax} showMin={showMin} showAvg={showAvg} showChart={showChart}
               solarShow={solarShow} solarRec={solarRec}
               battShow={battShow} battRec={battRec} battCustom={battCustom}
               showPaySolar={showPaySolar} paybackSolar={paybackSolar}
@@ -799,7 +808,7 @@ export default function SolarReportBuilder({ open, onClose, apiBase, device, sit
 }
 
 // ── เอกสารรายงาน (โทนสว่าง กว้างคงที่ 900px เพื่อให้ PDF ออกมาคมและคาดเดาได้) ──
-function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax, showMin, showAvg,
+function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax, showMin, showAvg, showChart,
                      solarShow, solarRec, battShow, battRec, battCustom,
                      solarManual, battManual, reportNote, sunHours, battDod,
                      showPaySolar, paybackSolar, showPayBatt, paybackBatt,
@@ -815,6 +824,17 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
   const notice = { background: '#e8f5e9', color: R.teal, padding: '12px 16px', borderRadius: 6, fontSize: 13, marginTop: 24, borderLeft: `4px solid ${R.teal}` }
 
   const noticeText = <><strong>หมายเหตุ:</strong> คำนวณจากการใช้ไฟจริง {rows.length} วัน · อัตรา {n2(rate)} บาท/Unit</>
+
+  // ค่าไฟของแต่ละวัน แล้วขยายเป็นรายเดือน/รายปีจากวันนั้น (ไม่ใช่ยอดสะสมจริง)
+  const bill = kwh => {
+    const day   = (kwh || 0) * rate
+    const month = day * BILL_DAYS_PER_MONTH
+    return { day, month, year: month * BILL_MONTHS_PER_YEAR }
+  }
+  // คอลัมน์รายเดือนคือตัวเลขที่ลูกค้าดูจริง → เน้นด้วยพื้นเขียวอ่อน + ตัวหนา
+  // แถวสูงสุด/ต่ำสุด/ค่าเฉลี่ยมีสีพื้นของตัวเองอยู่แล้ว ทับไปจะอ่านไม่ออก เหลือแค่ตัวหนา
+  const billHiHead = { background: '#e8f5e9', color: R.darkGreen, fontWeight: 700 }
+  const billHiCell = tinted => tinted ? { fontWeight: 700 } : { background: '#e8f5e9', color: R.darkGreen, fontWeight: 700 }
 
   const maxDate = stats?.maxRow?.date
   const minDate = stats?.minRow?.date
@@ -896,16 +916,16 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
         <thead>
           <tr>
             <th rowSpan={2} style={{ ...th, verticalAlign: 'bottom', width: '15%' }}>วันที่</th>
-            <th colSpan={3} style={{ ...th, borderBottom: `1px solid ${R.line}` }}>การใช้ไฟฟ้าจริง</th>
-            <th colSpan={3} style={{ ...th, borderBottom: `1px solid ${R.line}` }}>การคำนวณโซลาร์เซลล์</th>
+            <th colSpan={3} style={{ ...th, borderBottom: `1px solid ${R.line}` }}>การใช้ไฟฟ้าจริง<span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}> (Unit)</span></th>
+            <th colSpan={3} style={{ ...th, borderBottom: `1px solid ${R.line}` }}>ค่าไฟฟ้าโดยประมาณ<span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}> (บาท)</span></th>
           </tr>
           <tr>
-            <th style={th}>24 ชม.</th>
-            <th style={th}>กลางวัน<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>06:00–18:00</span></th>
-            <th style={th}>กลางคืน<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>18:00–06:00</span></th>
-            <th style={th}>แนะนำการติดตั้ง</th>
-            <th style={th}>ประหยัด/วัน<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>(THB)</span></th>
-            <th style={th}>ประหยัด/ปี<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>(THB)</span></th>
+            <th style={th}>Unit 24 ชม.</th>
+            <th style={th}>Unit กลางวัน<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>06:00–18:00</span></th>
+            <th style={th}>Unit กลางคืน<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>18:00–06:00</span></th>
+            <th style={th}>รายวัน</th>
+            <th style={{ ...th, ...billHiHead }}>รายเดือน<br /><span style={{ fontSize: 12, color: R.darkGreen, fontWeight: 400 }}>× {BILL_DAYS_PER_MONTH} วัน</span></th>
+            <th style={th}>รายปี<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>× {BILL_MONTHS_PER_YEAR} เดือน</span></th>
           </tr>
         </thead>
         <tbody>
@@ -915,29 +935,32 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
             const rowStyle = isMax ? { background: R.lightRed, color: R.red, fontWeight: 600 }
                            : isMin ? { background: R.tealHi, color: R.teal, fontWeight: 600 }
                            : {}
+            const b = bill(r.total)
             return (
               <tr key={r.date} style={rowStyle}>
                 <td style={td}>{thShort(r.date)}</td>
                 <td style={td}>{n2(r.total)}</td>
                 <td style={td}>{n2(r.day)}</td>
                 <td style={td}>{n2(r.night)}</td>
-                <td style={td}>{n2(r.solarKw)} kW</td>
-                <td style={td}>{nL(r.savingsDay)}</td>
-                <td style={td}>{nL(r.savingsYear)}</td>
+                <td style={td}>{nL(b.day)}</td>
+                <td style={{ ...td, ...billHiCell(isMax || isMin) }}>{nL(b.month)}</td>
+                <td style={td}>{nL(b.year)}</td>
               </tr>
             )
           })}
           {showAvg && stats && (() => {
             // html2canvas ไม่ render outline บน <tr> → ต้องตีกรอบที่ td แต่ละช่องแทน
+            const avgBill = bill(stats.avg.total)
             const cells = [
               'ค่าเฉลี่ย', n2(stats.avg.total), n2(stats.avg.day), n2(stats.avg.night),
-              `${n2(stats.avg.solarKw)} kW`, nL(stats.avg.savingsDay), nL(stats.avg.savingsYear),
+              nL(avgBill.day), nL(avgBill.month), nL(avgBill.year),
             ]
             return (
               <tr style={{ color: R.red, fontWeight: 600 }}>
                 {cells.map((v, i) => (
                   <td key={i} style={{
                     ...td,
+                    ...(i === 5 ? billHiCell(true) : null),
                     borderTop: `2px solid ${R.red}`, borderBottom: `2px solid ${R.red}`,
                     borderLeft: i === 0 ? `2px solid ${R.red}` : td.border,
                     borderRight: i === cells.length - 1 ? `2px solid ${R.red}` : td.border,
@@ -949,6 +972,8 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
           {!rows.length && <tr><td colSpan={7} style={{ ...td, padding: 24, color: R.muted }}>ยังไม่ได้เลือกวันที่</td></tr>}
         </tbody>
       </table>
+
+      {showChart && stats?.maxRow && <PeakDayChart row={stats.maxRow} />}
 
       <div style={notice}>{noticeText}</div>
 
@@ -1058,6 +1083,88 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
   )
 }
 
+// กราฟกำลังไฟรายนาทีของวันที่ใช้ไฟสูงสุด + จุด peak — ขนาดคงที่ (ไม่ responsive) เพราะพรีวิวถูก scale
+// ด้วย transform และ html2canvas ต้องได้ภาพที่วาดเสร็จแล้ว → ปิด animation
+const CHART_LINE = '#f5a623'
+
+const minLabel = i => `${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}`
+
+function PeakDayChart({ row }) {
+  const canvasRef = useRef(null)
+  const instRef   = useRef(null)
+  const power = row.power
+
+  // จุดกำลังไฟสูงสุด (ต้องมีข้อมูลรายนาที)
+  let peakIdx = -1
+  if (power) power.forEach((p, i) => { if (p !== null && (peakIdx < 0 || p > power[peakIdx])) peakIdx = i })
+
+  useEffect(() => {
+    if (!power) return
+    let alive = true
+    ;(async () => {
+      const { Chart, registerables } = await import('chart.js')
+      Chart.register(...registerables)
+      if (!alive || !canvasRef.current) return
+      instRef.current?.destroy()
+      const font = { family: 'Sarabun', size: 12 }
+      instRef.current = new Chart(canvasRef.current.getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: Array.from({ length: 1440 }, (_, i) => minLabel(i)),
+          datasets: [
+            {
+              label: 'กำลังไฟ (kW)', data: power,
+              borderColor: CHART_LINE, backgroundColor: 'rgba(245,166,35,0.15)',
+              borderWidth: 1.2, pointRadius: 0, fill: true, tension: 0.25, spanGaps: false,
+            },
+            {
+              label: 'Peak', data: power.map((p, i) => (i === peakIdx ? p : null)),
+              borderColor: R.red, backgroundColor: R.red, pointRadius: 5, showLine: false,
+            },
+          ],
+        },
+        options: {
+          responsive: false, animation: false, devicePixelRatio: 2,
+          plugins: { legend: { display: false }, tooltip: { enabled: false } },
+          scales: {
+            x: { ticks: { color: R.muted, font, autoSkip: false, maxRotation: 0,
+                          callback: (_, i) => (i % 120 === 0 ? minLabel(i) : null) },
+                 grid: { color: (c) => (c.index % 120 === 0 ? '#eceff1' : 'transparent') } },
+            y: { beginAtZero: true, title: { display: true, text: 'kW', color: R.muted, font },
+                 ticks: { color: R.muted, font }, grid: { color: '#eceff1' } },
+          },
+        },
+      })
+    })()
+    return () => { alive = false; instRef.current?.destroy(); instRef.current = null }
+  }, [power, peakIdx])
+
+  const tile = { width: 260, border: `1px solid ${R.border}`, borderRadius: 10, padding: '10px 14px', minWidth: 0 }
+  const tTitle = { fontSize: 12, color: R.muted }
+  const tVal   = { fontSize: 18, fontWeight: 700, color: R.text }
+  const tSub   = { fontSize: 12, color: R.muted }
+
+  return (
+    <div style={{ marginTop: 28 }}>
+      <div style={{ fontSize: 15, fontWeight: 600, color: R.text, marginBottom: 12 }}>
+        กราฟการใช้ไฟฟ้าวันที่สูงสุด ({thShort(row.date)})
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+        <div style={{ ...tile, borderColor: R.red, background: R.lightRed }}>
+          <div style={tTitle}>กำลังไฟสูงสุด (Peak)</div>
+          <div style={{ ...tVal, color: R.red }}>{peakIdx >= 0 ? `${n2(power[peakIdx])} kW` : '--'}</div>
+          <div style={tSub}>{peakIdx >= 0 ? `เวลา ${minLabel(peakIdx)} น.` : 'กำลังโหลดข้อมูล…'}</div>
+        </div>
+      </div>
+
+      {power
+        ? <canvas ref={canvasRef} width={820} height={280} style={{ width: 820, height: 280 }} />
+        : <div style={{ height: 280, display: 'flex', alignItems: 'center', justifyContent: 'center', color: R.muted, border: `1px dashed ${R.border}`, borderRadius: 8 }}>กำลังโหลดข้อมูลรายนาที…</div>}
+    </div>
+  )
+}
+
 function Legend({ color, outline, children }) {
   return (
     <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1127,7 +1234,7 @@ function PaybackTable({ title, rows, invest, years, note }) {
 }
 
 // ── ปฏิทินย่อในแผงตั้งค่า — โชว์ว่าวันไหนมีข้อมูล กดเลือกใส่รายงานได้เลย ──────
-function MiniCalendar({ apiBase, selected, onToggle }) {
+function MiniCalendar({ apiBase, powerUnit, selected, onToggle }) {
   const now = new Date()
   const [year, setYear]       = useState(now.getFullYear())
   const [month, setMonth]     = useState(now.getMonth() + 1)
@@ -1147,7 +1254,7 @@ function MiniCalendar({ apiBase, selected, onToggle }) {
       .then(r => r.json())
       .then(list => {
         const map = {}
-        ;(Array.isArray(list) ? list : []).forEach(e => {
+        scaleCalendarEvents(Array.isArray(list) ? list : [], powerUnit).forEach(e => {
           const ds = String(e.start || '').slice(0, 10)
           // backend ตอบมาทีละ 2 เดือน (เดือนนี้ + เดือนก่อน) → กรองเฉพาะเดือนที่กำลังดู
           if (!ds.startsWith(`${year}-${mp}`)) return
@@ -1162,7 +1269,7 @@ function MiniCalendar({ apiBase, selected, onToggle }) {
       .catch(() => { if (alive) setDays({}) })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
-  }, [apiBase, year, mp])
+  }, [apiBase, year, mp, powerUnit])
 
   const prev = () => (month === 1 ? (setMonth(12), setYear(y => y - 1)) : setMonth(m => m - 1))
   const next = () => (month === 12 ? (setMonth(1), setYear(y => y + 1)) : setMonth(m => m + 1))
@@ -1360,8 +1467,8 @@ function Card({ recommended, title, subs, value, note, perDay, perYear }) {
       <hr style={{ border: 'none', borderTop: '1px solid #f0f0f0', margin: '16px 0' }} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 8, alignItems: 'center' }}>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <span style={{ fontSize: 11, color: R.muted, marginBottom: 2 }}>ประหยัด/วัน</span>
-          <span style={{ fontSize: 14, fontWeight: 700 }}>{nL(perDay)} ฿</span>
+          <span style={{ fontSize: 11, color: R.muted, marginBottom: 2 }}>ประหยัด/เดือน</span>
+          <span style={{ fontSize: 14, fontWeight: 700 }}>{nL(perDay * BILL_DAYS_PER_MONTH)} ฿</span>
         </div>
         <div style={{ background: R.lightGreen, color: R.darkGreen, padding: '6px 10px', borderRadius: 8 }}>
           <div style={{ fontSize: 11, opacity: 0.95 }}>ประหยัด/ปี</div>
