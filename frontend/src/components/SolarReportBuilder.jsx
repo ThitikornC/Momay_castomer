@@ -916,13 +916,13 @@ function ReportDoc({ innerRef, siteName, rows, stats, rate, reportDate, showMax,
         <thead>
           <tr>
             <th rowSpan={2} style={{ ...th, verticalAlign: 'bottom', width: '15%' }}>วันที่</th>
-            <th colSpan={3} style={{ ...th, borderBottom: `1px solid ${R.line}` }}>การใช้ไฟฟ้าจริง<span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}> (Unit)</span></th>
+            <th colSpan={3} style={{ ...th, borderBottom: `1px solid ${R.line}` }}>การใช้ไฟฟ้าจริง</th>
             <th colSpan={3} style={{ ...th, borderBottom: `1px solid ${R.line}` }}>ค่าไฟฟ้าโดยประมาณ<span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}> (บาท)</span></th>
           </tr>
           <tr>
-            <th style={th}>Unit 24 ชม.</th>
-            <th style={th}>Unit กลางวัน<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>06:00–18:00</span></th>
-            <th style={th}>Unit กลางคืน<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>18:00–06:00</span></th>
+            <th style={th}>ทั้งวันใช้ไฟฟ้า(ยูนิต)<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>24 ชม.</span></th>
+            <th style={th}>กลางวันใช้ไฟฟ้า(ยูนิต)<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>06:00–18:00</span></th>
+            <th style={th}>กลางคืนใช้ไฟฟ้า(ยูนิต)<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>18:00–06:00</span></th>
             <th style={th}>รายวัน</th>
             <th style={{ ...th, ...billHiHead }}>รายเดือน<br /><span style={{ fontSize: 12, color: R.darkGreen, fontWeight: 400 }}>× {BILL_DAYS_PER_MONTH} วัน</span></th>
             <th style={th}>รายปี<br /><span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>× {BILL_MONTHS_PER_YEAR} เดือน</span></th>
